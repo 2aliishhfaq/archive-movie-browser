@@ -1,6 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
+const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+
+function getDownloadUrl(source) {
+  try {
+    const url = new URL(source);
+    const host = url.hostname.toLowerCase();
+    if (host === 'archive.org' || host.endsWith('.archive.org')) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'download' && parts[1]) {
+        url.searchParams.set('download', '1');
+        return url.toString();
+      }
+      if (parts[0] === 'details' && parts[1]) return 'https://archive.org/download/' + encodeURIComponent(parts[1]);
+    }
+    return url.toString();
+  } catch { return source; }
+}
 
 function getArchiveEmbedUrl(source) {
   try {
@@ -32,6 +49,9 @@ function MovieBrowser() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showInstallNotice, setShowInstallNotice] = useState(false);
+  const [installHelp, setInstallHelp] = useState(false);
 
   const pageSize = 24;
   const params = useMemo(() => {
@@ -71,6 +91,72 @@ function MovieBrowser() {
 
   useEffect(() => { setPage(0); }, [query, category]);
 
+  useEffect(() => {
+    let deferred = null;
+    let active = true;
+    const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    const checkInstallState = async () => {
+      if (!active || isStandalone()) { setShowInstallNotice(false); return; }
+      let installed = false;
+      if (typeof navigator.getInstalledRelatedApps === 'function') {
+        try { installed = (await navigator.getInstalledRelatedApps()).some(app => app.platform === 'webapp'); }
+        catch { /* Unsupported browser or unavailable install-state check. */ }
+      }
+      if (!active) return;
+      if (installed) {
+        localStorage.setItem('reelbox-pwa-installed', '1');
+        localStorage.setItem('reelbox-install-last-check', String(Date.now()));
+        setShowInstallNotice(false);
+        return;
+      }
+      const lastCheck = Number(localStorage.getItem('reelbox-install-last-check') || 0);
+      const dismissedUntil = Number(localStorage.getItem('reelbox-install-dismissed-until') || 0);
+      if (!lastCheck || Date.now() - lastCheck >= INSTALL_CHECK_INTERVAL) {
+        localStorage.setItem('reelbox-install-last-check', String(Date.now()));
+        localStorage.removeItem('reelbox-pwa-installed');
+        if (Date.now() >= dismissedUntil && deferred) setShowInstallNotice(true);
+      }
+    };
+    const onBeforeInstall = event => {
+      event.preventDefault();
+      deferred = event;
+      setInstallPrompt(event);
+      checkInstallState();
+    };
+    const onInstalled = () => {
+      deferred = null;
+      setInstallPrompt(null);
+      setShowInstallNotice(false);
+      setInstallHelp(false);
+      localStorage.setItem('reelbox-pwa-installed', '1');
+      localStorage.setItem('reelbox-install-last-check', String(Date.now()));
+      localStorage.removeItem('reelbox-install-dismissed-until');
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    window.addEventListener('appinstalled', onInstalled);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    checkInstallState();
+    const intervalId = window.setInterval(checkInstallState, INSTALL_CHECK_INTERVAL);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  async function installReelbox() {
+    if (!installPrompt) { setInstallHelp(true); return; }
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice?.outcome === 'accepted') { setShowInstallNotice(false); setInstallPrompt(null); }
+  }
+
+  function dismissInstallNotice() {
+    setShowInstallNotice(false);
+    localStorage.setItem('reelbox-install-dismissed-until', String(Date.now() + INSTALL_CHECK_INTERVAL));
+  }
+
   const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
 
   useEffect(() => {
@@ -107,6 +193,20 @@ function MovieBrowser() {
       <div className="pagination"><button disabled={page===0 || loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>PAGE {page+1} OF {Math.max(1,Math.ceil(total/pageSize))}</span><button disabled={loading || (page+1)*pageSize>=total} onClick={()=>setPage(p=>p+1)}>Next →</button></div>
     </section>
     <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
+    {showInstallNotice && <aside className="install-prompt" role="dialog" aria-label="Install Reelbox">
+      <button className="install-dismiss" type="button" onClick={dismissInstallNotice} aria-label="Dismiss install prompt">×</button>
+      <span className="install-mark">R</span>
+      <div className="install-copy"><strong>Install Reelbox</strong><span>Add Reelbox to your desktop or home screen for one-tap access.</span></div>
+      <button className="install-action" type="button" onClick={installReelbox}>INSTALL APP</button>
+    </aside>}
+    {installHelp && <div className="install-help-backdrop" role="presentation" onClick={() => setInstallHelp(false)}>
+      <section className="install-help" role="dialog" aria-modal="true" aria-label="Install Reelbox instructions" onClick={e => e.stopPropagation()}>
+        <button className="install-dismiss" type="button" onClick={() => setInstallHelp(false)} aria-label="Close">×</button>
+        <p className="eyebrow">REELBOX APP</p><h2>Add Reelbox to your device</h2>
+        <p>Open your browser menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>. Your browser will create the Reelbox shortcut.</p>
+        <button className="install-action" type="button" onClick={() => setInstallHelp(false)}>GOT IT</button>
+      </section>
+    </div>}
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <div className="player-modal-top">
         <span>NOW PLAYING · ARCHIVE.ORG</span>
@@ -115,7 +215,7 @@ function MovieBrowser() {
       <div className="video-frame">{archivePlayerUrl
         ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
         : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={selected.movie_link} target="_blank" rel="noopener noreferrer" aria-label={'Download ' + selected.movie_name}>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
