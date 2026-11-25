@@ -561,3 +561,71 @@
     max-height:calc(100vh - 16px);
   }
 }
+
+
+/* Native HTML5 stream player: responsive 16:9 stage with device-native controls. */
+.video-frame {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:auto;
+  min-height:0;
+  max-height:none;
+  aspect-ratio:16 / 9;
+  flex:0 0 auto;
+  overflow:hidden;
+  background:#000;
+}
+.video-frame video,
+.video-frame iframe {
+  position:absolute;
+  inset:0;
+  display:block;
+  width:100%;
+  height:100%;
+  min-width:0;
+  min-height:0;
+  max-width:100%;
+  max-height:100%;
+  border:0;
+  object-fit:contain;
+  background:#000;
+}
+.player-loading,
+.player-unavailable {
+  display:flex;
+  position:absolute;
+  inset:0;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:10px;
+  padding:20px;
+  color:#e9e6dd;
+  text-align:center;
+  background:#050505;
+}
+.player-loading strong,
+.player-unavailable strong {font-size:clamp(13px,2vw,18px)}
+.player-loading small {color:#888;font-size:11px;line-height:1.5}
+.player-unavailable a {color:#d9e75d;font-size:13px}
+.player-spinner {
+  width:30px;
+  height:30px;
+  border:3px solid #383834;
+  border-top-color:#d9e75d;
+  border-radius:50%;
+  animation:reelbox-spin .8s linear infinite;
+}
+@keyframes reelbox-spin {to {transform:rotate(360deg)}}
+.player-modal {width:min(96vw,1280px,calc((100dvh - 190px) * 16 / 9));max-height:calc(100dvh - 16px)}
+@media(max-width:650px) {
+  .player-modal {width:min(100%,calc((100dvh - 184px) * 16 / 9));max-height:calc(100dvh - 12px)}
+  .video-frame {aspect-ratio:16 / 9}
+  .player-info {padding:14px;gap:10px}
+}
+@media(orientation:landscape) and (max-height:520px) {
+  .player-modal {width:min(96vw,calc((100dvh - 132px) * 16 / 9));max-height:calc(100dvh - 8px)}
+  .video-frame {aspect-ratio:16 / 9}
+}
