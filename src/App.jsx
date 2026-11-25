@@ -17,7 +17,7 @@ function archiveEmbedUrl(source) {
 function browserPlayable(source) {
   try {
     const pathname = new URL(source).pathname.toLowerCase();
-    return /\\.(mp4|m4v|webm|ogv|ogg)$/.test(pathname);
+    return /\.(mp4|m4v|webm|ogv|ogg)$/.test(pathname);
   } catch { return false; }
 }
 
@@ -186,6 +186,19 @@ function AdminPanel() {
       <p className="eyebrow">COLLECTION MANAGEMENT</p>
       <h1>Bring films<br/><em>into the archive.</em></h1>
       <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
+      <section className="dashboard-section admin-access">
+        <div className="dashboard-section-heading">
+          <p className="eyebrow">ADMIN ACCESS</p>
+          <h2>Admin session</h2>
+          <p>Enter your admin token once. It will be remembered on this device for future visits.</p>
+        </div>
+        <form className="admin-form" onSubmit={event => { event.preventDefault(); window.localStorage.setItem('archive-admin-token', token.trim()); setError(''); }}>
+          <label>ADMIN TOKEN
+            <input type="password" autoComplete="current-password" value={token} onChange={e => { setToken(e.target.value); window.localStorage.setItem('archive-admin-token', e.target.value.trim()); }} placeholder="MOVIES_ADMIN_TOKEN" required />
+          </label>
+          <button className="admin-submit" type="submit">SAVE ADMIN SESSION</button>
+        </form>
+      </section>
       <section className="dashboard-section">
         <div className="dashboard-section-heading">
           <p className="eyebrow">YOUR MOVIE LIBRARY</p>
@@ -219,9 +232,6 @@ function AdminPanel() {
           <p>Search the Internet Archive and add playable films to the same catalog.</p>
         </div>
         <form className="admin-form" onSubmit={handleSubmit}>
-        <label>ADMIN TOKEN
-          <input type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} placeholder="Paste MOVIES_ADMIN_TOKEN" required />
-        </label>
         <label>SEARCH INTERNET ARCHIVE
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Leave blank to browse the Feature Films collection" maxLength={120} />
         </label>
@@ -244,7 +254,7 @@ function AdminPanel() {
         {result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}
         <a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a>
       </section>}
-      <p className="admin-security">Your token is saved in this browser until you clear the admin session or browser storage. It is sent over HTTPS and never included in the public movie catalog.</p>
+      <p className="admin-security">Your admin token is stored only in this browser's local storage and is sent over HTTPS. It is never included in the public movie catalog.</p>
       <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
     </section>
     <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
