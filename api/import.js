@@ -11,7 +11,9 @@ const json = (res, status, body) => {
 
 const authorized = req => {
   const expected = Buffer.from(String(process.env.MOVIES_ADMIN_TOKEN || ''));
-  const received = Buffer.from(String(req.headers.authorization || '').replace(/^Bearer\\s+/i, ''));
+  const header = String(req.headers.authorization || '').trim();
+  const receivedValue = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : header;
+  const received = Buffer.from(receivedValue);
   return expected.length > 0 && expected.length === received.length && timingSafeEqual(expected, received);
 };
 
@@ -74,7 +76,7 @@ export default async function handler(req, res) {
   const category = typeof body.category === 'string' ? body.category.trim().slice(0, 100) : '';
   const limit = Math.min(8, Math.max(1, Number.parseInt(body.limit, 10) || 6));
   const searchQuery = requestedQuery
-    ? 'mediatype:movies AND (' + requestedQuery.replace(/[\\[\\]{}^~:*?\\\\"]/g, ' ').replace(/\\s+/g, ' ').trim() + ')'
+    ? 'mediatype:movies AND (' + requestedQuery.replaceAll('"', '').replaceAll('[', ' ').replaceAll(']', ' ').replaceAll('{', ' ').replaceAll('}', ' ').replaceAll(':', ' ').replaceAll('*', ' ').split(' ').filter(Boolean).join(' ') + ')'
     : 'mediatype:movies AND collection:feature_films';
 
   const searchUrl = new URL('https://archive.org/advancedsearch.php');
@@ -137,7 +139,8 @@ export default async function handler(req, res) {
       const restToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
       if (restUrl && restToken) {
         try {
-          const response = await fetch(restUrl.replace(/\\/+$/, ''), {
+          while (restUrl.endsWith('/')) restUrl = restUrl.slice(0, -1);
+          const response = await fetch(restUrl, {
             method: 'POST',
             headers: { Authorization: 'Bearer ' + restToken, 'Content-Type': 'application/json' },
             body: JSON.stringify(['INCR', 'movies:cache-version']),
