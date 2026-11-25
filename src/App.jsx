@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 
-function getDownloadUrl(source) {
+function getDownloadUrl(source, movieTitle) {
   try {
     const url = new URL(source);
     const host = url.hostname.toLowerCase();
@@ -11,6 +11,7 @@ function getDownloadUrl(source) {
       const proxy = new URL('https://archive-movie-proxy.2aliishhfaq.workers.dev/');
       proxy.searchParams.set('url', url.toString());
       proxy.searchParams.set('download', '1');
+      proxy.searchParams.set('filename', movieTitle || 'Reelbox Movie');
       return proxy.toString();
     }
     return url.toString();
@@ -216,7 +217,7 @@ function MovieBrowser() {
       <div className="video-frame">{archivePlayerUrl
         ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
         : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
