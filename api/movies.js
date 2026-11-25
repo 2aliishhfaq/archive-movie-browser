@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
+import { Redis } from '@upstash/redis';
 
 const TABLE = 'public.movies';
 const CACHE_TTL = 300;
@@ -29,35 +30,31 @@ const safeEqual = (a, b) => {
   return left.length > 0 && left.length === right.length && timingSafeEqual(left, right);
 };
 const isAdmin = req => safeEqual((req.headers.authorization || '').replace(/^Bearer\s+/i, ''), process.env.MOVIES_ADMIN_TOKEN);
-const redisReady = () => Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-async function redisPipeline(commands) {
+const redisConfig = () => ({
+  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+const redisReady = () => Boolean(redisConfig().url && redisConfig().token);
+let redisClient;
+function getRedis() {
   if (!redisReady()) return null;
-  const base = process.env.KV_REST_API_URL.replace(/\/+$/, '');
-  const response = await fetch(base + '/pipeline', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + process.env.KV_REST_API_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(commands),
-    signal: AbortSignal.timeout(2500),
-  });
-  if (!response.ok) throw new Error('Redis HTTP ' + response.status);
-  const entries = await response.json();
-  const failed = entries.find(entry => entry.error);
-  if (failed) throw new Error('Redis command failed: ' + failed.error);
-  return entries.map(entry => entry.result);
+  if (!redisClient) redisClient = new Redis(redisConfig());
+  return redisClient;
 }
 async function cached(key, load) {
-  if (!redisReady()) return { value: await load(), hit: false, configured: false };
+  const redis = getRedis();
+  if (!redis) return { value: await load(), hit: false, configured: false };
   try {
-    let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+    let version = await redis.get(CACHE_VERSION_KEY);
     if (!version) {
-      [version] = await redisPipeline([['SET', CACHE_VERSION_KEY, '1', 'NX'], ['GET', CACHE_VERSION_KEY]]);
-      version ||= '1';
+      await redis.set(CACHE_VERSION_KEY, '1', { nx: true });
+      version = await redis.get(CACHE_VERSION_KEY) || '1';
     }
     const cacheKey = 'movies:v' + version + ':' + key;
-    const [stored] = await redisPipeline([['GET', cacheKey]]);
-    if (stored) return { value: JSON.parse(stored), hit: true, configured: true };
+    const stored = await redis.get(cacheKey);
+    if (stored !== null && stored !== undefined) return { value: stored, hit: true, configured: true };
     const value = await load();
-    await redisPipeline([['SET', cacheKey, JSON.stringify(value), 'EX', String(CACHE_TTL)]]);
+    await redis.set(cacheKey, value, { ex: CACHE_TTL });
     return { value, hit: false, configured: true };
   } catch (error) {
     console.error('redis-cache-bypass', error.message);
@@ -65,8 +62,9 @@ async function cached(key, load) {
   }
 }
 async function invalidateCache() {
-  if (!redisReady()) return;
-  try { await redisPipeline([['INCR', CACHE_VERSION_KEY]]); }
+  const redis = getRedis();
+  if (!redis) return;
+  try { await redis.incr(CACHE_VERSION_KEY); }
   catch (error) { console.error('redis-invalidation-failed', error.message); }
 }
 function readBody(req) {
