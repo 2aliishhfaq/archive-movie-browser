@@ -85,6 +85,36 @@ function setup({ ignoreRange = false } = {}) {
   return { request, upstreamCalls, entries, flushCache, restore };
 }
 
+test('uses a fixed-length identity stream for browser-facing fMP4 byte ranges', async () => {
+  const originalFixedLengthStream = globalThis.FixedLengthStream;
+  globalThis.FixedLengthStream = class extends TransformStream {
+    constructor(expectedBytes) {
+      let actualBytes = 0;
+      super({
+        transform(chunk, controller) {
+          actualBytes += chunk.byteLength;
+          if (actualBytes > expectedBytes) throw new RangeError('FixedLengthStream received too many bytes');
+          controller.enqueue(chunk);
+        },
+        flush() {
+          if (actualBytes !== expectedBytes) throw new RangeError('FixedLengthStream received too few bytes');
+        }
+      });
+    }
+  };
+  const env = setup();
+  try {
+    const response = await env.request('bytes=24-55');
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get('Content-Length'), '32');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), makeBytes(24, 32));
+  } finally {
+    env.restore();
+    if (originalFixedLengthStream === undefined) delete globalThis.FixedLengthStream;
+    else globalThis.FixedLengthStream = originalFixedLengthStream;
+  }
+});
+
 test('returns exact 206 bytes while caching the aligned first 8 MiB MP4 block', async () => {
   const env = setup();
   try {
