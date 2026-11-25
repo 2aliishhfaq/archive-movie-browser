@@ -15,7 +15,14 @@ const validId = value => /^\d{1,18}$/.test(String(value ?? ''));
 const validMovieLink = value => {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && (url.hostname === 'archive.org' || url.hostname.endsWith('.archive.org'));
+    const host = url.hostname.toLowerCase();
+    // Movie links are opened by the visitor's player, never fetched by this API.
+    // Require a public-looking HTTPS hostname and reject credentials/local hosts.
+    return url.protocol === 'https:' &&
+      !url.username && !url.password &&
+      host.includes('.') &&
+      host !== 'localhost' && !host.endsWith('.localhost') &&
+      !host.endsWith('.local');
   } catch { return false; }
 };
 const validPoster = value => {
