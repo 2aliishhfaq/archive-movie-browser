@@ -2,31 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
-import './fonts.css';
 import './index.css';
-import { startAnalytics } from './services/analytics';
 
-startAnalytics();
-
-// Each page is its own canonical address on the site's domain, so /lists/... and /browse are
-// indexed as themselves, never as a preview or workers.dev copy. Set here, not in index.html,
-// which every page shares.
-const canonical = `https://www.orphanedfilms.com${location.pathname}`;
-const tag = (name, attrs) => document.head.appendChild(Object.assign(document.createElement(name), attrs));
-tag('link', { rel: 'canonical', href: canonical });
-tag('meta', { content: canonical }).setAttribute('property', 'og:url');
-
-// One film with sound at a time: when a video starts, any other one playing with sound pauses
-// (the TV set, a channel opened in the guide, a film). The muted front-page preview is left alone.
-document.addEventListener('play', (event) => {
-  if (!(event.target instanceof HTMLVideoElement) || event.target.muted) return;
-  for (const other of document.querySelectorAll('video')) if (other !== event.target && !other.muted && !other.paused) other.pause();
-}, true);
+document.title = 'Archive / Movies — Films worth finding';
+const canonical = 'https://reelbox-reelbox.vercel.app' + location.pathname;
+let canonicalTag = document.querySelector('link[rel="canonical"]');
+if (!canonicalTag) { canonicalTag = document.createElement('link'); canonicalTag.rel = 'canonical'; document.head.appendChild(canonicalTag); }
+canonicalTag.href = canonical;
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>
+  <React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>
 );
