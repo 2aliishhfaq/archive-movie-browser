@@ -29,8 +29,6 @@ function MovieBrowser() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
-  const [playerMode, setPlayerMode] = useState('archive');
-  const [playerError, setPlayerError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
@@ -76,11 +74,6 @@ function MovieBrowser() {
   const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
 
   useEffect(() => {
-    setPlayerMode(archivePlayerUrl ? 'archive' : 'html5');
-    setPlayerError('');
-  }, [selected, archivePlayerUrl]);
-
-  useEffect(() => {
     if (!selected) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -115,16 +108,13 @@ function MovieBrowser() {
     </section>
     <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
-      <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
-      <div className="video-frame">{playerMode === 'archive' && archivePlayerUrl
+      <div className="player-modal-top">
+        <span>NOW PLAYING · ARCHIVE.ORG</span>
+        <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
+      </div>
+      <div className="video-frame">{archivePlayerUrl
         ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
-        : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => setPlayerError('This direct video file could not be played by your browser. Try the Internet Archive player or open the source file.')}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      {archivePlayerUrl && <div className="player-switch" role="group" aria-label="Choose video player">
-        <span>PLAYBACK</span>
-        <button type="button" className={playerMode === 'archive' ? 'active' : ''} onClick={() => { setPlayerMode('archive'); setPlayerError(''); }}>INTERNET ARCHIVE PLAYER</button>
-        <button type="button" className={playerMode === 'html5' ? 'active' : ''} onClick={() => { setPlayerMode('html5'); setPlayerError(''); }}>DIRECT HTML5 PLAYER</button>
-      </div>}
-      {playerError && <div className="player-error" role="alert">{playerError} <a href={selected.movie_link} target="_blank" rel="noreferrer">Open source ↗</a></div>}
+        : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link}><a href={selected.movie_link}>Open video source</a></video>}</div>
       <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={selected.movie_link} target="_blank" rel="noopener noreferrer" aria-label={'Download ' + selected.movie_name}>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
