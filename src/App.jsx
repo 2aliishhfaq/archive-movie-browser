@@ -102,7 +102,7 @@ function AdminPanel() {
   const [token, setToken] = useState(() => window.sessionStorage.getItem('archive-admin-token') || '');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('Feature Films');
-  const [limit, setLimit] = useState(6);
+  const [limit, setLimit] = useState(5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
