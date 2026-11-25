@@ -7,13 +7,11 @@ function getDownloadUrl(source) {
   try {
     const url = new URL(source);
     const host = url.hostname.toLowerCase();
-    if (host === 'archive.org' || host.endsWith('.archive.org')) {
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (parts[0] === 'download' && parts[1]) {
-        url.searchParams.set('download', '1');
-        return url.toString();
-      }
-      if (parts[0] === 'details' && parts[1]) return 'https://archive.org/download/' + encodeURIComponent(parts[1]);
+    if ((host === 'archive.org' || host.endsWith('.archive.org')) && url.pathname.split('/').filter(Boolean)[0] === 'download') {
+      const proxy = new URL('https://archive-movie-proxy.2aliishhfaq.workers.dev/');
+      proxy.searchParams.set('url', url.toString());
+      proxy.searchParams.set('download', '1');
+      return proxy.toString();
     }
     return url.toString();
   } catch { return source; }
