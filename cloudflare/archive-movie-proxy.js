@@ -607,10 +607,14 @@ async function handleFmp4Range(request, target, ctx) {
   if (firstBlock.etag) responseHeaders.set("ETag", firstBlock.etag);
   if (firstBlock.lastModified) responseHeaders.set("Last-Modified", firstBlock.lastModified);
 
-  return new Response(
-    fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end),
-    { status: 206, headers: responseHeaders }
-  );
+  const responseLength = end - requested.start + 1;
+  const body = fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end);
+  // FixedLengthStream is an identity stream: it preserves the exact HTTP length while
+  // propagating backpressure and cancellation to the 8 MiB block reader.
+  return new Response(withFixedLengthStream(body, responseLength), {
+    status: 206,
+    headers: responseHeaders
+  });
 }
 
 async function handleStreamProxy(request, ctx) {
