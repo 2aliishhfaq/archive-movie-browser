@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
     const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
     if (url && token) {
-      const response = await fetch(url.replace(/\\/+$/, ''), {
+      const response = await fetch(url.replace(/\/+$/, ''), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify(['PING']),
