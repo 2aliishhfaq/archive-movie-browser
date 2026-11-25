@@ -74,6 +74,8 @@ async function invalidateCache() {
   catch (error) { console.error('redis-invalidation-failed', error.message); }
 }
 function readBody(req) {
+  if (req.body && typeof req.body === 'object') return Promise.resolve(req.body);
+  if (typeof req.body === 'string') { try { return Promise.resolve(req.body ? JSON.parse(req.body) : {}); } catch { return Promise.reject(new Error('Invalid JSON')); } }
   return new Promise((resolve, reject) => {
     let raw = '';
     req.on('data', chunk => {
