@@ -218,7 +218,7 @@ export default async function handler(req, res) {
       const category = String(req.query?.category || '').trim().slice(0, 100);
       const limit = Math.min(100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 24));
       const offset = Math.max(0, Number.parseInt(req.query?.offset, 10) || 0);
-      const key = JSON.stringify({ id: id || null, q, category, limit, offset });
+      const key = JSON.stringify({ id: id || null, q, category, limit, offset, categories: req.query?.categories === '1' });
       const result = await cached(key, async () => {
         if (id !== undefined) {
           if (!validId(id)) return { movie: null };
