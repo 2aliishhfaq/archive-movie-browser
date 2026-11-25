@@ -464,6 +464,16 @@ function parseContentRange(value) {
   return { start, end, total };
 }
 
+/* global FixedLengthStream */
+// Identity stream: declares an exact HTTP byte length without buffering or changing the bytes.
+function withFixedLengthStream(body, length) {
+  const FixedLength = typeof FixedLengthStream === "function" ? FixedLengthStream : null;
+  if (!body || !FixedLength || !Number.isSafeInteger(length) || length < 0) return body;
+  const fixed = new FixedLength(length);
+  body.pipeTo(fixed.writable).catch(() => {});
+  return fixed.readable;
+}
+
 export async function createFmp4CacheBlock(request) {
   if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
   const url = new URL(request.url);
@@ -516,7 +526,7 @@ async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
     const response = await ctx.exports.Fmp4RangeCache.fetch(blockRequest);
     if (response.status !== 200) { try { await response.body?.cancel(); } catch {} return null; }
     const total = Number(response.headers.get("X-Range-Total"));
-    const length = Number(response.headers.get("Content-Length"));
+    const length = Number(response.headers.get("X-Range-Chunk-Length") || response.headers.get("Content-Length"));
     if (!Number.isSafeInteger(total) || total <= chunkStart || !Number.isSafeInteger(length) || length < 1 || length > FMP4_RANGE_CHUNK_BYTES) {
       try { await response.body?.cancel(); } catch {}
       return null;
