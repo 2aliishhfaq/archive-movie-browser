@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
 
-const CACHE_TTL = 900;
+const CACHE_TTL = 3600;
 const CACHE_VERSION_KEY = 'movies:cache-version';
 const json = (res, status, body, headers = {}) => {
   res.statusCode = status;
@@ -242,7 +242,7 @@ export default async function handler(req, res) {
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR category = ${category})`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
       });
-      return json(res, 200, result.value, { 'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED', 'Cache-Control': adminView ? 'no-store' : 'public, max-age=0, s-maxage=60, stale-while-revalidate=300' });
+      return json(res, 200, result.value, { 'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED', 'Cache-Control': adminView ? 'no-store' : 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600, stale-if-error=86400' });
     }
     if (method === 'POST') {
       const body = await readBody(req);
