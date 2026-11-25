@@ -102,7 +102,9 @@ function validateMovie(body) {
 }
 
 function pickPlayableFile(files = []) {
-  const extensions = { mp4: 100, m4v: 95, webm: 80, ogv: 65, ogg: 60, mov: 50, mpg: 40, mpeg: 40, mkv: 35 };
+  // Keep imported sources browser-friendly. AVI/MKV may be valid archive
+  // downloads but are not reliably playable by native browser video elements.
+  const extensions = { mp4: 100, m4v: 95, webm: 90, ogv: 70, ogg: 65 };
   return files
     .filter(file => file && typeof file.name === 'string' && file.name.length < 500)
     .map(file => {
