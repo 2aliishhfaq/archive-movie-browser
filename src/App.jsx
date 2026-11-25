@@ -85,14 +85,9 @@ function MovieBrowser() {
       <a className="brand" href="/" aria-label="Archive Movie Browser home"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / MOVIES</span></span></a>
       <span className="top-note">INDEPENDENT FILM ARCHIVE</span>
     </header>
-    <section className="hero">
-      <p className="eyebrow">A WINDOW INTO FILM HISTORY</p>
-      <h1>Films worth<br/><em>finding.</em></h1>
-      <p className="hero-copy">Explore films preserved by the Internet Archive. Discover a forgotten favourite or find something entirely new.</p>
-      <div className="search-row">
-        <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search films..." aria-label="Search films"/></label>
-        <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category"><option value="">All categories</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
-      </div>
+    <section className="browse-tools" aria-label="Find movies">
+      <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." aria-label="Search movies"/></label>
+      <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category"><option value="">All categories</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
     </section>
     <section className="catalog">
       <div className="section-heading"><div><p className="eyebrow">THE COLLECTION</p><h2>{category || 'Browse films'}</h2></div><span className="count">{total.toLocaleString()} FILMS {cache ? '· CACHE ' + cache : ''}</span></div>
@@ -105,7 +100,7 @@ function MovieBrowser() {
       : !error && <div className="empty"><span>✳</span><h3>No films found</h3><p>Try another title or category.</p></div>}
       <div className="pagination"><button disabled={page===0 || loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>PAGE {page+1} OF {Math.max(1,Math.ceil(total/pageSize))}</span><button disabled={loading || (page+1)*pageSize>=total} onClick={()=>setPage(p=>p+1)}>Next →</button></div>
     </section>
-    <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="/admin">CATALOG ADMIN ↗</a><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
+    <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       <div className="video-frame">{useArchivePlayer
@@ -125,6 +120,32 @@ function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const [manualMovie, setManualMovie] = useState({ movie_name: '', category: '', poster: '', movie_link: '' });
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualMessage, setManualMessage] = useState('');
+
+  async function publishMovie(event) {
+    event.preventDefault();
+    setManualMessage('');
+    if (!token.trim()) { setError('Enter your admin token to continue.'); return; }
+    setManualBusy(true);
+    window.localStorage.setItem('archive-admin-token', token.trim());
+    try {
+      const response = await fetch('/api/movies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
+        body: JSON.stringify(manualMovie),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not publish movie.');
+      setManualMessage('Published successfully. This movie is now visible in the public catalog.');
+      setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+    } catch (err) {
+      setManualMessage(err.message || 'Publish failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -165,7 +186,39 @@ function AdminPanel() {
       <p className="eyebrow">COLLECTION MANAGEMENT</p>
       <h1>Bring films<br/><em>into the archive.</em></h1>
       <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
-      <form className="admin-form" onSubmit={handleSubmit}>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading">
+          <p className="eyebrow">YOUR MOVIE LIBRARY</p>
+          <h2>Add your own movie</h2>
+          <p>Enter a public HTTPS video URL. When you publish, the movie appears in the user catalog.</p>
+        </div>
+        <form className="admin-form" onSubmit={publishMovie}>
+          <label>MOVIE TITLE
+            <input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required />
+          </label>
+          <div className="admin-fields">
+            <label>CATEGORY
+              <input value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Drama" maxLength={100} />
+            </label>
+            <label>POSTER IMAGE URL
+              <input value={manualMovie.poster} onChange={e => setManualMovie({...manualMovie, poster:e.target.value})} placeholder="https://..." type="url" />
+            </label>
+          </div>
+          <label>VIDEO URL (PUBLIC HTTPS MP4 / WEBM)
+            <input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://your-host.com/movie.mp4" type="url" required />
+          </label>
+          <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'PUBLISHING…' : 'PUBLISH TO USER CATALOG ↗'}</button>
+        </form>
+        {manualMessage && <div className="admin-message" role="status">{manualMessage}</div>}
+        <p className="admin-security">The video must already be hosted at a public HTTPS address. A file on your PC cannot stream until it is uploaded to a video host or storage such as Cloudflare R2.</p>
+      </section>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading">
+          <p className="eyebrow">INTERNET ARCHIVE</p>
+          <h2>Import public archive films</h2>
+          <p>Search the Internet Archive and add playable films to the same catalog.</p>
+        </div>
+        <form className="admin-form" onSubmit={handleSubmit}>
         <label>ADMIN TOKEN
           <input type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} placeholder="Paste MOVIES_ADMIN_TOKEN" required />
         </label>
