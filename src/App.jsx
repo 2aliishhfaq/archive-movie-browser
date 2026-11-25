@@ -72,7 +72,14 @@ function MovieBrowser() {
 
   useEffect(() => { setPage(0); }, [query, category]);
 
-  useEffect(() => { setUseArchivePlayer(Boolean(selected && !browserPlayable(selected.movie_link))); }, [selected]);
+  useEffect(() => {
+    let archiveSource = false;
+    try {
+      const host = new URL(selected?.movie_link || '').hostname.toLowerCase();
+      archiveSource = host === 'archive.org' || host.endsWith('.archive.org');
+    } catch { /* Invalid URLs stay in the standard player's error state. */ }
+    setUseArchivePlayer(Boolean(selected && archiveSource && !browserPlayable(selected.movie_link)));
+  }, [selected]);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') setSelected(null); };
@@ -105,7 +112,12 @@ function MovieBrowser() {
       <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       <div className="video-frame">{useArchivePlayer
         ? <iframe title={selected.movie_name + ' — Internet Archive player'} src={archiveEmbedUrl(selected.movie_link)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen loading="eager" />
-        : <video controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => setUseArchivePlayer(true)}><a href={selected.movie_link}>Open video at Internet Archive</a></video>}</div>
+        : <video controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => {
+          try {
+            const host = new URL(selected.movie_link).hostname.toLowerCase();
+            if (host === 'archive.org' || host.endsWith('.archive.org')) setUseArchivePlayer(true);
+          } catch { /* Keep the source link available if a host rejects playback. */ }
+        }}><a href={selected.movie_link}>Open video source</a></video>}</div>
       <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a href={selected.movie_link} target="_blank" rel="noreferrer">SOURCE ↗</a></div>
     </section></div>}
   </main>;
@@ -256,6 +268,7 @@ function AdminPanel() {
       </section>}
       <p className="admin-security">Your admin token is stored only in this browser's local storage and is sent over HTTPS. It is never included in the public movie catalog.</p>
       <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
+      </section>
     </section>
     <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
   </main>;
