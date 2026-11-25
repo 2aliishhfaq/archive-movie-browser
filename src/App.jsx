@@ -52,16 +52,92 @@ function makeArchiveDownloadUrl(identifier, filename) {
     filename.split('/').map(encodeURIComponent).join('/');
 }
 
-function pickArchiveVideoFile(files = []) {
-  const priority = { mp4: 100, m4v: 95, webm: 90, ogv: 70, ogg: 65 };
+const VIDEO_MIME_TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mpeg4: 'video/mp4',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  ogg: 'video/ogg',
+};
+
+function getVideoMimeType(source) {
+  try {
+    const extension = new URL(source).pathname.split('.').pop().toLowerCase();
+    return VIDEO_MIME_TYPES[extension] || '';
+  } catch { return ''; }
+}
+
+function isDirectVideoUrl(source) {
+  return Boolean(getVideoMimeType(source));
+}
+
+function getArchiveItemIdentifier(source) {
+  try {
+    const url = new URL(source);
+    const host = url.hostname.toLowerCase();
+    if (host !== 'archive.org' && !host.endsWith('.archive.org')) return null;
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (!['download', 'details', 'embed'].includes(parts[0]) || !parts[1]) return null;
+    return decodeURIComponent(parts[1]);
+  } catch { return null; }
+}
+
+function getArchiveVideoCandidates(files = []) {
   return files
     .filter(file => file && typeof file.name === 'string' && file.name.length < 500)
     .map(file => {
       const extension = file.name.split('.').pop().toLowerCase();
-      return { file, score: priority[extension] || 0 };
+      const name = file.name.toLowerCase();
+      const format = String(file.format || '').toLowerCase();
+      let score = 0;
+      if (extension === 'mp4' || extension === 'm4v' || extension === 'mpeg4') {
+        score = 1000;
+        if (name.endsWith('.ia.mp4')) score += 240;
+        else if (format.includes('h.264') || format.includes('h264')) score += 150;
+        else if (/_512kb\.mp4$/.test(name)) score += 80;
+        if (file.source && file.source !== 'original') score += 10;
+      } else if (extension === 'webm') score = 760;
+      else if (extension === 'ogv' || extension === 'ogg') score = 620;
+      return { file, score, size: Number(file.size || 0) };
     })
-    .filter(item => item.score > 0 && (!item.file.source || item.file.source === 'original'))
-    .sort((left, right) => right.score - left.score || Number(right.file.size || 0) - Number(left.file.size || 0))[0]?.file || null;
+    .filter(item => item.score > 0)
+    .sort((left, right) => right.score - left.score || right.size - left.size)
+    .map(item => item.file);
+}
+
+function pickArchiveVideoFile(files = []) {
+  return getArchiveVideoCandidates(files)[0] || null;
+}
+
+async function resolveArchivePlaybackSources(source, signal) {
+  const directSource = isDirectVideoUrl(source) ? source : null;
+  const identifier = getArchiveItemIdentifier(source);
+  if (!identifier) return directSource ? [directSource] : [];
+
+  // A previously selected IA fast-start derivative is already the best low-latency option.
+  if (directSource && (/\.ia\.mp4(?:$|\?)/i.test(directSource) || /_512kb\.mp4(?:$|\?)/i.test(directSource))) {
+    return [directSource];
+  }
+
+  try {
+    const metadataUrl = 'https://archive.org/metadata/' + encodeURIComponent(identifier) + '/files?start=0&count=500';
+    const response = await fetch(metadataUrl, {
+      headers: { Accept: 'application/json' },
+      cache: 'force-cache',
+      signal,
+    });
+    if (!response.ok) throw new Error('Archive metadata unavailable');
+    const metadata = await response.json();
+    const files = Array.isArray(metadata.result) ? metadata.result : (Array.isArray(metadata.files) ? metadata.files : []);
+    const candidates = getArchiveVideoCandidates(files)
+      .slice(0, 5)
+      .map(file => makeArchiveDownloadUrl(identifier, file.name));
+    if (directSource && !candidates.includes(directSource)) candidates.push(directSource);
+    return candidates.slice(0, 6);
+  } catch {
+    return directSource ? [directSource] : [];
+  }
 }
 
 async function fetchArchiveCatalog(searchParams) {
@@ -169,6 +245,7 @@ function MovieBrowser() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
+  const [playback, setPlayback] = useState({ status: 'idle', sources: [], index: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
@@ -279,6 +356,31 @@ function MovieBrowser() {
   }
 
   const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
+  const activeVideoSource = playback.sources[playback.index] || null;
+
+  useEffect(() => {
+    if (!selected) {
+      setPlayback({ status: 'idle', sources: [], index: 0 });
+      return undefined;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setPlayback({ status: 'resolving', sources: [], index: 0 });
+    resolveArchivePlaybackSources(selected.movie_link, controller.signal)
+      .then(sources => {
+        if (!active) return;
+        setPlayback(sources.length
+          ? { status: 'ready', sources, index: 0 }
+          : { status: 'fallback', sources: [], index: 0 });
+      })
+      .catch(() => {
+        if (active) setPlayback({ status: 'fallback', sources: [], index: 0 });
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [selected?.id, selected?.movie_link]);
 
   useEffect(() => {
     if (!selected) return undefined;
@@ -330,13 +432,22 @@ function MovieBrowser() {
     </div>}
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <div className="player-modal-top">
-        <span>NOW PLAYING · ARCHIVE.ORG</span>
+        <span>NOW PLAYING · HTML5 PLAYER</span>
         <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       </div>
-      <div className="video-frame">{archivePlayerUrl
-        ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
-        : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="video-frame">
+        {playback.status === 'idle' || playback.status === 'resolving'
+          ? <div className="player-loading" role="status"><span className="player-spinner" /><strong>Preparing fast-start video…</strong><small>Finding the best browser-compatible Archive file</small></div>
+          : activeVideoSource
+            ? <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback' })}>
+                <source src={activeVideoSource} type={getVideoMimeType(activeVideoSource) || undefined} />
+                <a href={activeVideoSource}>Open video source</a>
+              </video>
+            : archivePlayerUrl
+              ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
+              : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
+      </div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? 'HTML5 STREAM' : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
