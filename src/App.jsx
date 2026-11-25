@@ -159,7 +159,7 @@ function AdminPanel() {
           </label>
           <label>IMPORT LIMIT
             <select value={limit} onChange={e => setLimit(Number(e.target.value))}>
-              <option value={3}>3 films</option><option value={6}>6 films</option><option value={8}>8 films</option>
+              <option value={3}>3 films</option><option value={5}>5 films</option>
             </select>
           </label>
         </div>
