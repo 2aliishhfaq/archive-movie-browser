@@ -31,8 +31,11 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Repair dependency tree and lockfile
+      - name: Repair root dependency tree and lockfile
         run: npm audit fix
+
+      - name: Repair MCP dependency tree and lockfile
+        run: npm audit fix --prefix mcp
 
       - name: Verify clean root install from refreshed lockfile
         run: npm ci
@@ -42,6 +45,9 @@ jobs:
 
       - name: Verify dependency audit
         run: npm audit --audit-level=moderate
+
+      - name: Verify MCP dependency audit
+        run: npm audit --prefix mcp --audit-level=moderate
 
       - name: Run automated tests
         run: npm test
