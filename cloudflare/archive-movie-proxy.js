@@ -19,10 +19,10 @@ function withHeaders(response, extra = {}) {
 function catalogCacheKeys(requestUrl) {
   const request = new URL(requestUrl);
   const fresh = new URL(request.origin);
-  fresh.pathname = "/__edge_cache/catalog/fresh";
+  fresh.pathname = "/__edge_cache/v2/catalog/fresh";
   fresh.search = request.search;
   const stale = new URL(request.origin);
-  stale.pathname = "/__edge_cache/catalog/stale";
+  stale.pathname = "/__edge_cache/v2/catalog/stale";
   stale.search = request.search;
   return [new Request(fresh.toString()), new Request(stale.toString())];
 }
