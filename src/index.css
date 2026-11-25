@@ -84,3 +84,5 @@
   .video-frame{max-height:68dvh;aspect-ratio:16/9}
   .player-info{padding:10px 16px}
 }
+
+.admin-inline{border:0;background:transparent;color:#d9e75d;text-decoration:underline;font:10px 'DM Mono',monospace;padding:2px 5px}.admin-inline.danger{color:#f0a79b}.admin-imported div{align-items:center}.admin-imported span{display:flex;align-items:center;gap:5px}
