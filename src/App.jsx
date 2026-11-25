@@ -91,22 +91,26 @@ async function fetchArchiveCatalog(searchParams) {
   const docs = searchData?.response?.docs || [];
   const movies = [];
 
+  // Resolve exact playback files for only the first four results. Remaining cards use
+  // Archive.org's own details player, limiting metadata calls during provider outages.
   for (let index = 0; index < docs.length; index += 4) {
-    const batch = await Promise.all(docs.slice(index, index + 4).map(async doc => {
+    const batch = await Promise.all(docs.slice(index, index + 4).map(async (doc, batchIndex) => {
       const identifier = String(doc.identifier || '').trim();
       if (!/^[a-zA-Z0-9._-]{1,200}$/.test(identifier)) return null;
       let movieLink = 'https://archive.org/details/' + encodeURIComponent(identifier);
-      try {
-        const metadataResponse = await fetch('https://archive.org/metadata/' + encodeURIComponent(identifier), {
-          headers: { Accept: 'application/json' },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (metadataResponse.ok) {
-          const metadataData = await metadataResponse.json();
-          const file = pickArchiveVideoFile(metadataData.files);
-          if (file) movieLink = makeArchiveDownloadUrl(identifier, file.name);
-        }
-      } catch { /* Details embed remains a playable fallback when file metadata is unavailable. */ }
+      if (index + batchIndex < 4) {
+        try {
+          const metadataResponse = await fetch('https://archive.org/metadata/' + encodeURIComponent(identifier), {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(6000),
+          });
+          if (metadataResponse.ok) {
+            const metadataData = await metadataResponse.json();
+            const file = pickArchiveVideoFile(metadataData.files);
+            if (file) movieLink = makeArchiveDownloadUrl(identifier, file.name);
+          }
+        } catch { /* Details embed remains playable if file metadata is unavailable. */ }
+      }
       return {
         id: 'archive-' + identifier,
         movie_name: String(doc.title || identifier).trim().slice(0, 240),
