@@ -118,7 +118,7 @@ function MovieBrowser() {
             if (host === 'archive.org' || host.endsWith('.archive.org')) setUseArchivePlayer(true);
           } catch { /* Keep the source link available if a host rejects playback. */ }
         }}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a href={selected.movie_link} target="_blank" rel="noreferrer">SOURCE ↗</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={selected.movie_link} target="_blank" rel="noopener noreferrer" aria-label={'Download ' + selected.movie_name}>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
