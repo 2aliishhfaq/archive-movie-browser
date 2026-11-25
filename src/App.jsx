@@ -1,10 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-const PROXY = 'https://archive-movie-proxy.2aliishhfaq.workers.dev/';
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 
-function proxyUrl(source) {
-  return PROXY + '?url=' + encodeURIComponent(source);
+function archiveEmbedUrl(source) {
+  try {
+    const url = new URL(source);
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts[0] !== 'download' || parts.length < 3) return source;
+    const identifier = parts[1];
+    const filename = decodeURIComponent(parts.slice(2).join('/'));
+    return 'https://archive.org/embed/' + encodeURIComponent(identifier) +
+      '?autoplay=1&file=' + encodeURIComponent(filename);
+  } catch { return source; }
+}
+
+function browserPlayable(source) {
+  try {
+    const pathname = new URL(source).pathname.toLowerCase();
+    return /\\.(mp4|m4v|webm|ogv|ogg)$/.test(pathname);
+  } catch { return false; }
 }
 
 function MovieBrowser() {
@@ -15,6 +29,7 @@ function MovieBrowser() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
+  const [useArchivePlayer, setUseArchivePlayer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
@@ -57,6 +72,8 @@ function MovieBrowser() {
 
   useEffect(() => { setPage(0); }, [query, category]);
 
+  useEffect(() => { setUseArchivePlayer(Boolean(selected && !browserPlayable(selected.movie_link))); }, [selected]);
+
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') setSelected(null); };
     window.addEventListener('keydown', onKey);
@@ -91,7 +108,9 @@ function MovieBrowser() {
     <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="/admin">CATALOG ADMIN ↗</a><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
-      <div className="video-frame"><video controls autoPlay playsInline poster={selected.poster || undefined} src={proxyUrl(selected.movie_link)}><a href={selected.movie_link}>Open video at Internet Archive</a></video></div>
+      <div className="video-frame">{useArchivePlayer
+        ? <iframe title={selected.movie_name + ' — Internet Archive player'} src={archiveEmbedUrl(selected.movie_link)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen loading="eager" />
+        : <video controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => setUseArchivePlayer(true)}><a href={selected.movie_link}>Open video at Internet Archive</a></video>}</div>
       <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a href={selected.movie_link} target="_blank" rel="noreferrer">SOURCE ↗</a></div>
     </section></div>}
   </main>;
@@ -99,7 +118,7 @@ function MovieBrowser() {
 
 
 function AdminPanel() {
-  const [token, setToken] = useState(() => window.sessionStorage.getItem('archive-admin-token') || '');
+  const [token, setToken] = useState(() => window.localStorage.getItem('archive-admin-token') || '');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('Feature Films');
   const [limit, setLimit] = useState(5);
@@ -113,7 +132,7 @@ function AdminPanel() {
     setResult(null);
     if (!token.trim()) { setError('Enter your admin token to continue.'); return; }
     setBusy(true);
-    window.sessionStorage.setItem('archive-admin-token', token.trim());
+    window.localStorage.setItem('archive-admin-token', token.trim());
     try {
       const response = await fetch('/api/movies', {
         method: 'POST',
@@ -131,7 +150,7 @@ function AdminPanel() {
   }
 
   function clearToken() {
-    window.sessionStorage.removeItem('archive-admin-token');
+    window.localStorage.removeItem('archive-admin-token');
     setToken('');
     setResult(null);
     setError('');
@@ -172,7 +191,7 @@ function AdminPanel() {
         {result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}
         <a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a>
       </section>}
-      <p className="admin-security">Your token stays in this browser tab only. It is sent to the server over HTTPS and is never included in the public movie catalog.</p>
+      <p className="admin-security">Your token is saved in this browser until you clear the admin session or browser storage. It is sent over HTTPS and never included in the public movie catalog.</p>
       <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
     </section>
     <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
