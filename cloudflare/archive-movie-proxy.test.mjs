@@ -141,6 +141,22 @@ test('streams a range spanning two aligned chunks without changing the requested
 });
 
 test('streams an open-ended browser range as a truthful full 206 while fetching only aligned 8 MiB blocks', async () => {
+  const originalFixedLengthStream = globalThis.FixedLengthStream;
+  globalThis.FixedLengthStream = class extends TransformStream {
+    constructor(expectedBytes) {
+      let actualBytes = 0;
+      super({
+        transform(chunk, controller) {
+          actualBytes += chunk.byteLength;
+          if (actualBytes > expectedBytes) throw new RangeError('FixedLengthStream received too many bytes');
+          controller.enqueue(chunk);
+        },
+        flush() {
+          if (actualBytes !== expectedBytes) throw new RangeError('FixedLengthStream received too few bytes');
+        }
+      });
+    }
+  };
   const env = setup();
   try {
     const response = await env.request('bytes=0-');
@@ -158,7 +174,11 @@ test('streams an open-ended browser range as a truthful full 206 while fetching 
       'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1),
       'bytes=' + (CHUNK * 2) + '-' + (CHUNK * 3 - 1)
     ]);
-  } finally { env.restore(); }
+  } finally {
+    env.restore();
+    if (originalFixedLengthStream === undefined) delete globalThis.FixedLengthStream;
+    else globalThis.FixedLengthStream = originalFixedLengthStream;
+  }
 });
 
 test('passes through a full 200 when an upstream ignores Range rather than mislabelling it 206', async () => {
