@@ -467,8 +467,8 @@ function parseContentRange(value) {
 // Workers only emits an explicit Content-Length for a FixedLengthStream (or a buffered body).
 // Keep media bytes streamed end-to-end while still giving HTML5 demuxers an exact range length.
 function withFixedLengthStream(body, length) {
-  const FixedLength = globalThis.FixedLengthStream;
-  if (!body || typeof FixedLength !== "function" || !Number.isSafeInteger(length) || length < 0) {
+  const FixedLength = typeof FixedLengthStream === "function" ? FixedLengthStream : null;
+  if (!body || !FixedLength || !Number.isSafeInteger(length) || length < 0) {
     return body;
   }
   const fixed = new FixedLength(length);
