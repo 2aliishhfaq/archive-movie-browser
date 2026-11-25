@@ -20,9 +20,7 @@ function getDownloadUrl(source, movieTitle, directArchive = false) {
         proxy.searchParams.set('filename', movieTitle || 'Reelbox Movie');
         return proxy.toString();
       }
-      if (parts[0] === 'details' && parts[1]) {
-        return 'https://archive.org/download/' + encodeURIComponent(parts[1]) + '/';
-      }
+      if (parts[0] === 'details' && parts[1]) return url.toString();
     }
     return url.toString();
   } catch { return source; }
@@ -115,7 +113,7 @@ async function fetchArchiveCatalog(searchParams) {
         category: 'Archive.org',
         poster: 'https://archive.org/services/img/' + encodeURIComponent(identifier),
         movie_link: movieLink,
-        direct_archive: true,
+        direct_archive: movieLink.includes('/details/'),
       };
     }));
     movies.push(...batch.filter(Boolean));
