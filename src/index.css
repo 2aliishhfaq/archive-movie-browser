@@ -359,3 +359,27 @@
   .install-copy span{font-size:10px}
   .install-action{min-height:38px;padding:0 10px;font-size:9px}
 }
+
+
+/* Final player viewport: generous 16:9 stage, all controls and actions scroll into view. */
+.modal-backdrop{padding:clamp(8px,2vh,22px);overflow-y:auto;align-items:center}
+.player-modal{width:min(96vw,1280px);max-height:96dvh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.player-modal-top{min-height:50px;flex:0 0 auto}
+.video-frame{width:100%;height:auto;min-height:0;max-height:none;aspect-ratio:16/9;flex:0 0 auto;overflow:hidden;background:#000}
+.video-frame iframe,.video-frame video{position:absolute;inset:0;width:100%;height:100%;max-width:100%;object-fit:contain}
+.player-info{min-height:0;flex:0 0 auto;padding:20px 24px}
+@media(max-width:650px){
+ .modal-backdrop{padding:6px;align-items:center}
+ .player-modal{width:100%;max-height:calc(100dvh - 12px)}
+ .player-modal-top{min-height:44px}
+ .video-frame{aspect-ratio:16/9;width:100%;height:auto;min-height:0}
+ .player-info{padding:16px;display:flex;flex-direction:column;align-items:stretch;gap:12px}
+ .player-info>.download-button{width:100%;min-height:48px}
+}
+@media(orientation:landscape) and (max-height:520px){
+ .modal-backdrop{padding:4px;align-items:flex-start}
+ .player-modal{width:min(96vw,calc((100dvh - 120px)*16/9));max-height:calc(100dvh - 8px)}
+ .video-frame{aspect-ratio:16/9}
+ .player-info{padding:10px 14px;flex-direction:row;align-items:center}
+ .player-info>.download-button{width:auto}
+}
