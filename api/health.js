@@ -23,9 +23,10 @@ export default async function handler(req, res) {
       checks.redis = response.ok && (await response.json()).result === 'PONG';
     }
   } catch (error) { console.error('health-redis', error.message); }
-  const ok = checks.database && checks.redis;
+  const ok = checks.database;
+  const degraded = ok && !checks.redis;
   res.statusCode = ok ? 200 : 503;
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify({ ok, service: 'archive-movie-browser-api', checks }));
+  res.end(JSON.stringify({ ok, degraded, service: 'archive-movie-browser-api', checks }));
 }
