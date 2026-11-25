@@ -86,3 +86,12 @@
 }
 
 .admin-inline{border:0;background:transparent;color:#d9e75d;text-decoration:underline;font:10px 'DM Mono',monospace;padding:2px 5px}.admin-inline.danger{color:#f0a79b}.admin-imported div{align-items:center}.admin-imported span{display:flex;align-items:center;gap:5px}
+
+.top-nav{display:flex;align-items:center;gap:22px}
+.admin-tab{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 16px;border:1px solid #d9e75d;color:#d9e75d;text-decoration:none;font:10px 'DM Mono',monospace;letter-spacing:.12em;transition:background .2s,color .2s}
+.admin-tab:hover{background:#d9e75d;color:#151514}
+.admin-login-only{min-height:65vh;display:flex;flex-direction:column;justify-content:center;padding-top:30px;padding-bottom:50px}
+.admin-login-only .dashboard-section{max-width:520px;width:100%;margin-top:20px}
+.admin-login-only .admin-form{display:grid;gap:18px}
+.admin-login-only .admin-submit{width:100%;max-width:none}
+@media(max-width:520px){.top-nav{gap:10px}.top-note{display:none}.admin-tab{min-height:34px;padding:0 12px}}
