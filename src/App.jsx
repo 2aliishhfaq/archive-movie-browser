@@ -3,16 +3,26 @@ import React, { useEffect, useMemo, useState } from 'react';
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 
-function getDownloadUrl(source, movieTitle) {
+function getDownloadUrl(source, movieTitle, directArchive = false) {
   try {
     const url = new URL(source);
     const host = url.hostname.toLowerCase();
-    if ((host === 'archive.org' || host.endsWith('.archive.org')) && url.pathname.split('/').filter(Boolean)[0] === 'download') {
-      const proxy = new URL('https://archive-movie-proxy.2aliishhfaq.workers.dev/');
-      proxy.searchParams.set('url', url.toString());
-      proxy.searchParams.set('download', '1');
-      proxy.searchParams.set('filename', movieTitle || 'Reelbox Movie');
-      return proxy.toString();
+    if (host === 'archive.org' || host.endsWith('.archive.org')) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'download' && parts[1]) {
+        if (directArchive) {
+          url.searchParams.set('download', '1');
+          return url.toString();
+        }
+        const proxy = new URL('https://archive-movie-proxy.2aliishhfaq.workers.dev/');
+        proxy.searchParams.set('url', url.toString());
+        proxy.searchParams.set('download', '1');
+        proxy.searchParams.set('filename', movieTitle || 'Reelbox Movie');
+        return proxy.toString();
+      }
+      if (parts[0] === 'details' && parts[1]) {
+        return 'https://archive.org/download/' + encodeURIComponent(parts[1]) + '/';
+      }
     }
     return url.toString();
   } catch { return source; }
@@ -35,6 +45,119 @@ function getArchiveEmbedUrl(source) {
     embed.searchParams.set('autoplay', '1');
     return embed.toString();
   } catch { return null; }
+}
+
+const CATALOG_EDGE_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev';
+const ARCHIVE_VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'ogv', 'ogg']);
+
+function makeArchiveDownloadUrl(identifier, filename) {
+  return 'https://archive.org/download/' + encodeURIComponent(identifier) + '/' +
+    filename.split('/').map(encodeURIComponent).join('/');
+}
+
+function pickArchiveVideoFile(files = []) {
+  const priority = { mp4: 100, m4v: 95, webm: 90, ogv: 70, ogg: 65 };
+  return files
+    .filter(file => file && typeof file.name === 'string' && file.name.length < 500)
+    .map(file => {
+      const extension = file.name.split('.').pop().toLowerCase();
+      return { file, score: priority[extension] || 0 };
+    })
+    .filter(item => item.score > 0 && (!item.file.source || item.file.source === 'original'))
+    .sort((left, right) => right.score - left.score || Number(right.file.size || 0) - Number(left.file.size || 0))[0]?.file || null;
+}
+
+async function fetchArchiveCatalog(searchParams) {
+  if (searchParams.get('categories') === '1') {
+    return { data: { categories: ['Archive.org'] }, cache: 'ARCHIVE-FALLBACK' };
+  }
+
+  const limit = Math.min(24, Math.max(1, Number.parseInt(searchParams.get('limit') || '24', 10) || 24));
+  const offset = Math.max(0, Number.parseInt(searchParams.get('offset') || '0', 10) || 0);
+  const query = String(searchParams.get('q') || '').trim().slice(0, 100)
+    .replace(/["\\[\\]{}:*]/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+
+  const searchUrl = new URL('https://archive.org/advancedsearch.php');
+  searchUrl.searchParams.set('q', query ? 'mediatype:movies AND (' + query + ')' : 'mediatype:movies');
+  searchUrl.searchParams.append('fl[]', 'identifier');
+  searchUrl.searchParams.append('fl[]', 'title');
+  searchUrl.searchParams.set('rows', String(limit));
+  searchUrl.searchParams.set('page', String(Math.floor(offset / limit) + 1));
+  searchUrl.searchParams.set('output', 'json');
+  searchUrl.searchParams.append('sort[]', 'downloads desc');
+
+  const searchResponse = await fetch(searchUrl.toString(), { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(9000) });
+  if (!searchResponse.ok) throw new Error('Archive.org search unavailable');
+  const searchData = await searchResponse.json();
+  const docs = searchData?.response?.docs || [];
+  const movies = [];
+
+  for (let index = 0; index < docs.length; index += 4) {
+    const batch = await Promise.all(docs.slice(index, index + 4).map(async doc => {
+      const identifier = String(doc.identifier || '').trim();
+      if (!/^[a-zA-Z0-9._-]{1,200}$/.test(identifier)) return null;
+      let movieLink = 'https://archive.org/details/' + encodeURIComponent(identifier);
+      try {
+        const metadataResponse = await fetch('https://archive.org/metadata/' + encodeURIComponent(identifier), {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (metadataResponse.ok) {
+          const metadataData = await metadataResponse.json();
+          const file = pickArchiveVideoFile(metadataData.files);
+          if (file) movieLink = makeArchiveDownloadUrl(identifier, file.name);
+        }
+      } catch { /* Details embed remains a playable fallback when file metadata is unavailable. */ }
+      return {
+        id: 'archive-' + identifier,
+        movie_name: String(doc.title || identifier).trim().slice(0, 240),
+        category: 'Archive.org',
+        poster: 'https://archive.org/services/img/' + encodeURIComponent(identifier),
+        movie_link: movieLink,
+        direct_archive: true,
+      };
+    }));
+    movies.push(...batch.filter(Boolean));
+  }
+
+  return {
+    data: { movies, total: Number(searchData?.response?.numFound || movies.length), limit, offset },
+    cache: 'ARCHIVE-FALLBACK',
+  };
+}
+
+async function fetchCatalogData(searchParams) {
+  const query = searchParams.toString();
+  try {
+    const response = await fetch(CATALOG_EDGE_URL + '/catalog' + (query ? '?' + query : ''), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (response.ok) {
+      return {
+        data: await response.json(),
+        cache: response.headers.get('X-Cache') || response.headers.get('X-Edge-Cache') || 'EDGE',
+      };
+    }
+  } catch { /* Cloudflare quota/network failures fall through to Vercel, then Archive.org. */ }
+
+  try {
+    const response = await fetch('/api/movies' + (query ? '?' + query : ''), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        data: data.movies ? { ...data, movies: data.movies.map(movie => ({ ...movie, direct_archive: true })) } : data,
+        cache: 'VERCEL-DIRECT',
+      };
+    }
+  } catch { /* Vercel Hobby limits/outages fall through to Archive.org. */ }
+
+  return fetchArchiveCatalog(searchParams);
 }
 
 function MovieBrowser() {
@@ -61,9 +184,8 @@ function MovieBrowser() {
   }, [query, category, page]);
 
   useEffect(() => {
-    fetch('/api/movies?categories=1')
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load categories')))
-      .then(data => setCategories(data.categories || []))
+    fetchCatalogData(new URLSearchParams({ categories: '1' }))
+      .then(({ data }) => setCategories(data.categories || ['Archive.org']))
       .catch(() => {});
   }, []);
 
@@ -71,12 +193,8 @@ function MovieBrowser() {
     let active = true;
     setLoading(true);
     setError('');
-    fetch('/api/movies?' + params)
-      .then(async r => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || 'Movie service is unavailable');
-        return { data, cache: r.headers.get('X-Cache') || '' };
-      })
+    fetchCatalogData(new URLSearchParams(params))
+      .then(({ data, cache }) => ({ data, cache }))
       .then(({ data, cache: cacheStatus }) => {
         if (!active) return;
         setMovies(data.movies || []);
@@ -217,7 +335,7 @@ function MovieBrowser() {
       <div className="video-frame">{archivePlayerUrl
         ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
         : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link}><a href={selected.movie_link}>Open video source</a></video>}</div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
