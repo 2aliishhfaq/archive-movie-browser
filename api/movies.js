@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
 
-const CACHE_TTL = 300;
+const CACHE_TTL = 900;
 const CACHE_VERSION_KEY = 'movies:cache-version';
 const json = (res, status, body, headers = {}) => {
   res.statusCode = status;
@@ -20,9 +20,7 @@ const validMovieLink = value => {
     // Require a public-looking HTTPS hostname and reject credentials/local hosts.
     return url.protocol === 'https:' &&
       !url.username && !url.password &&
-      host.includes('.') &&
-      host !== 'localhost' && !host.endsWith('.localhost') &&
-      !host.endsWith('.local');
+      (host === 'archive.org' || host.endsWith('.archive.org'));
   } catch { return false; }
 };
 const validPoster = value => {
@@ -222,13 +220,15 @@ export default async function handler(req, res) {
   const sql = neon(process.env.DATABASE_URL, { fetchOptions: { signal: AbortSignal.timeout(8000) } });
   try {
     if (method === 'GET') {
+      const adminView = req.query?.admin === '1';
+      if (adminView && !isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
       const id = req.query?.id;
       const q = String(req.query?.q || '').trim().slice(0, 100);
       const category = String(req.query?.category || '').trim().slice(0, 100);
-      const limit = Math.min(100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 24));
+      const limit = Math.min(adminView ? 500 : 100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 24));
       const offset = Math.max(0, Number.parseInt(req.query?.offset, 10) || 0);
       const key = JSON.stringify({ id: id || null, q, category, limit, offset, categories: req.query?.categories === '1' });
-      const result = await cached(key, async () => {
+      const result = await cached((adminView ? 'admin:' : '') + key, async () => {
         if (id !== undefined) {
           if (!validId(id)) return { movie: null };
           const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE id = ${String(id)} LIMIT 1`;
@@ -242,7 +242,7 @@ export default async function handler(req, res) {
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR category = ${category})`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
       });
-      return json(res, 200, result.value, { 'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED' });
+      return json(res, 200, result.value, { 'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED', 'Cache-Control': adminView ? 'no-store' : 'public, max-age=0, s-maxage=60, stale-while-revalidate=300' });
     }
     if (method === 'POST') {
       const body = await readBody(req);
