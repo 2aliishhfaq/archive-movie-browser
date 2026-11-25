@@ -73,7 +73,7 @@ function isDirectVideoUrl(source) {
 }
 
 function isHlsSource(source) {
-  try { return /\\.m3u8?$/i.test(new URL(source).pathname); }
+  try { return /\.m3u8?$/i.test(new URL(source).pathname); }
   catch { return false; }
 }
 
@@ -95,6 +95,8 @@ function loadHlsJs() {
 
 function HlsVideoPlayer({ source, poster, onPlaybackError }) {
   const videoRef = useRef(null);
+  const errorCallbackRef = useRef(onPlaybackError);
+  errorCallbackRef.current = onPlaybackError;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -115,7 +117,7 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
       const Hls = await loadHlsJs();
       if (!active) return;
       if (!Hls.isSupported()) {
-        onPlaybackError?.();
+        errorCallbackRef.current?.();
         return;
       }
 
@@ -128,7 +130,7 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
         backBufferLength: 30,
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data?.fatal) onPlaybackError?.();
+        if (data?.fatal) errorCallbackRef.current?.();
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {});
@@ -138,7 +140,7 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
     };
 
     startPlayback().catch(() => {
-      if (active) onPlaybackError?.();
+      if (active) errorCallbackRef.current?.();
     });
 
     return () => {
@@ -148,10 +150,10 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
       video.removeAttribute('src');
       video.load();
     };
-  }, [source, onPlaybackError]);
+  }, [source]);
 
   return <video ref={videoRef} controls autoPlay playsInline preload="auto" poster={poster || undefined}
-    onError={() => onPlaybackError?.()} />;
+    onError={() => errorCallbackRef.current?.()} />;
 }
 
 function getArchiveItemIdentifier(source) {
