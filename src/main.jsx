@@ -5,7 +5,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 document.title = 'Archive / Movies — Films worth finding';
-const canonical = 'https://reelbox-reelbox.vercel.app' + location.pathname;
+const canonical = 'https://reelbox-red.vercel.app' + location.pathname;
 let canonicalTag = document.querySelector('link[rel="canonical"]');
 if (!canonicalTag) { canonicalTag = document.createElement('link'); canonicalTag.rel = 'canonical'; document.head.appendChild(canonicalTag); }
 canonicalTag.href = canonical;
