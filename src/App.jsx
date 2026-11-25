@@ -90,7 +90,7 @@ function MovieBrowser() {
   return <main className="shell">
     <header className="topbar">
       <a className="brand" href="/" aria-label="Archive Movie Browser home"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / MOVIES</span></span></a>
-      <span className="top-note">INDEPENDENT FILM ARCHIVE</span>
+      <nav className="top-nav"><span className="top-note">INDEPENDENT FILM ARCHIVE</span><a className="admin-tab" href="/admin">ADMIN</a></nav>
     </header>
     <section className="browse-tools" aria-label="Find movies">
       <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." aria-label="Search movies"/></label>
@@ -125,7 +125,7 @@ function MovieBrowser() {
 
 
 function AdminPanel() {
-  const [token, setToken] = useState(() => window.localStorage.getItem('archive-admin-token') || '');
+  const [token, setToken] = useState('');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('Feature Films');
   const [limit, setLimit] = useState(5);
@@ -138,114 +138,40 @@ function AdminPanel() {
   const [adminMovies, setAdminMovies] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
 
-  async function loadAdminMovies() {
-    if (!token.trim()) return;
-    setAdminLoading(true);
-    try {
-      const response = await fetch('/api/movies?admin=1&limit=500&offset=0', { headers: { Authorization: 'Bearer ' + token.trim() } });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not load movie library.');
-      setAdminMovies(data.movies || []);
-    } catch (err) { setError(err.message || 'Could not load movie library.'); }
-    finally { setAdminLoading(false); }
-  }
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem('archive-admin-token');
+    if (!saved) return;
+    fetch('/api/movies?admin=1&limit=1', { headers: { Authorization: 'Bearer ' + saved } })
+      .then(response => { if (response.ok) { setToken(saved); setAuthorized(true); } else window.sessionStorage.removeItem('archive-admin-token'); })
+      .catch(() => window.sessionStorage.removeItem('archive-admin-token'));
+  }, []);
 
-  async function deleteMovie(id) {
-    if (!window.confirm('Delete this movie from the public catalogue?')) return;
-    try {
-      const response = await fetch('/api/movies', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() }, body: JSON.stringify({ id }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Delete failed.');
-      setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
-      setManualMessage('Movie deleted from the catalogue.');
-    } catch (err) { setError(err.message || 'Delete failed.'); }
-  }
-
-  function editMovie(movie) {
-    setEditingId(movie.id);
-    setManualMovie({ movie_name: movie.movie_name || '', category: movie.category || '', poster: movie.poster || '', movie_link: movie.movie_link || '' });
-    document.getElementById('movie-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
-  async function publishMovie(event) {
-    event.preventDefault();
-    setManualMessage('');
-    if (!token.trim()) { setError('Enter your admin token to continue.'); return; }
-    setManualBusy(true);
-    window.localStorage.setItem('archive-admin-token', token.trim());
-    try {
-      const response = await fetch('/api/movies', {
-        method: editingId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
-        body: JSON.stringify(editingId ? { ...manualMovie, id: editingId } : manualMovie),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not publish movie.');
-      setManualMessage(editingId ? 'Movie updated successfully.' : 'Published successfully. This movie is now visible in the public catalog.');
-      setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
-      setEditingId(null);
-      await loadAdminMovies();
-    } catch (err) {
-      setManualMessage(err.message || 'Publish failed.');
-    } finally {
-      setManualBusy(false);
-    }
-  }
-
-  async function handleSubmit(event) {
+  async function unlockDashboard(event) {
     event.preventDefault();
     setError('');
-    setResult(null);
-    if (!token.trim()) { setError('Enter your admin token to continue.'); return; }
-    setBusy(true);
-    window.localStorage.setItem('archive-admin-token', token.trim());
+    setAuthBusy(true);
     try {
-      const response = await fetch('/api/movies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
-        body: JSON.stringify({ action: 'import', query, category, limit }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Import request failed.');
-      setResult(data);
+      const response = await fetch('/api/movies?admin=1&limit=1', { headers: { Authorization: 'Bearer ' + token.trim() } });
+      if (!response.ok) throw new Error('Incorrect password. Access denied.');
+      window.sessionStorage.setItem('archive-admin-token', token.trim());
+      setAuthorized(true);
       await loadAdminMovies();
-    } catch (err) {
-      setError(err.message || 'Import failed. Please try again.');
-    } finally {
-      setBusy(false);
-    }
+    } catch (err) { setError(err.message || 'Could not verify password.'); }
+    finally { setAuthBusy(false); }
   }
 
-  function clearToken() {
-    window.localStorage.removeItem('archive-admin-token');
-    setToken('');
-    setResult(null);
-    setError('');
-  }
-
-  return <main className="admin-shell">
+  if (!authorized) return <main className="admin-shell">
     <header className="topbar">
       <a className="brand" href="/" aria-label="Back to Archive Movies"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / ADMIN</span></span></a>
       <a className="admin-back" href="/">← BACK TO CATALOG</a>
     </header>
-    <section className="admin-content">
-      <p className="eyebrow">COLLECTION MANAGEMENT</p>
-      <h1>Bring films<br/><em>into the archive.</em></h1>
-      <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
-      <section className="dashboard-section admin-access">
-        <div className="dashboard-section-heading">
-          <p className="eyebrow">ADMIN ACCESS</p>
-          <h2>Admin session</h2>
-          <p>Enter your dashboard password. It will be remembered on this device for future visits.</p>
-        </div>
-        <form className="admin-form" onSubmit={event => { event.preventDefault(); window.localStorage.setItem('archive-admin-token', token.trim()); setError(''); }}>
-          <label>ADMIN PASSWORD
-            <input type="password" autoComplete="current-password" value={token} onChange={e => { setToken(e.target.value); window.localStorage.setItem('archive-admin-token', e.target.value.trim()); }} placeholder="Enter dashboard password" required />
-          </label>
-          <button className="admin-submit" type="submit" onClick={() => setTimeout(loadAdminMovies, 0)}>UNLOCK DASHBOARD</button>
-        </form>
-      </section>
+    <section className="admin-content admin-login-only">
+      <p className="eyebrow">RESTRICTED AREA</p>
+      <h1>Admin<br/><em>access only.</em></h1>
+      <p className="admin-copy">Enter the administrator password to unlock the movie management dashboard.</p>
       <section className="dashboard-section" id="movie-editor">
         <div className="dashboard-section-heading">
           <p className="eyebrow">YOUR MOVIE LIBRARY</p>
