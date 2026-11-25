@@ -331,3 +331,31 @@
   .player-info{flex-direction:row;align-items:center;padding:10px 16px}
   .player-info>.download-button{width:auto;min-height:38px}
 }
+
+
+/* Reelbox install prompt */
+.install-prompt{
+  position:fixed;z-index:30;left:50%;bottom:max(18px,env(safe-area-inset-bottom));
+  transform:translateX(-50%);width:min(620px,calc(100vw - 28px));
+  display:flex;align-items:center;gap:14px;padding:16px 18px;
+  color:#f0eee7;background:#191918;border:1px solid #55554b;
+  box-shadow:0 18px 60px #000b;border-radius:8px;
+}
+.install-mark{display:grid;place-items:center;flex:0 0 42px;height:42px;border:1px solid #d9e75d;color:#d9e75d;font-size:22px;font-weight:800}
+.install-copy{display:grid;gap:4px;min-width:0;flex:1}
+.install-copy strong{font-size:15px}
+.install-copy span{font-size:12px;line-height:1.4;color:#aaa}
+.install-action{flex:0 0 auto;min-height:40px;padding:0 16px;border:0;background:#d9e75d;color:#101010;font:10px 'DM Mono',monospace;font-weight:700;letter-spacing:.08em}
+.install-dismiss{position:absolute;right:7px;top:5px;border:0;background:transparent;color:#aaa;font-size:22px;line-height:1;padding:3px 6px}
+.install-help-backdrop{position:fixed;inset:0;z-index:31;display:grid;place-items:center;padding:20px;background:#000c}
+.install-help{position:relative;width:min(100%,420px);padding:28px;background:#191918;border:1px solid #55554b;color:#eee}
+.install-help h2{margin:8px 0 12px;font-size:24px}
+.install-help p:not(.eyebrow){color:#aaa;font-size:14px;line-height:1.7}
+.install-help .install-action{width:100%;margin-top:10px}
+@media(max-width:520px){
+  .install-prompt{gap:10px;padding:15px 12px 12px}
+  .install-mark{flex-basis:36px;height:36px}
+  .install-copy strong{font-size:13px}
+  .install-copy span{font-size:10px}
+  .install-action{min-height:38px;padding:0 10px;font-size:9px}
+}
