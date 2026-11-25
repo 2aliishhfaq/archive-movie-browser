@@ -36,7 +36,7 @@ const redisReady = () => Boolean(redisConfig().url && redisConfig().token);
 async function redisPipeline(commands) {
   if (!redisReady()) return null;
   const { url, token } = redisConfig();
-  const response = await fetch(url.replace(/\\/+$/, '') + '/pipeline', {
+  const response = await fetch(url.replace(/\/+$/, '') + '/pipeline', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify(commands),
