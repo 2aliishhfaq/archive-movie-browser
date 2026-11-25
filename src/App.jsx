@@ -48,7 +48,6 @@ function getArchiveEmbedUrl(source) {
 }
 
 const CATALOG_EDGE_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev';
-const ARCHIVE_VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'ogv', 'ogg']);
 
 function makeArchiveDownloadUrl(identifier, filename) {
   return 'https://archive.org/download/' + encodeURIComponent(identifier) + '/' +
