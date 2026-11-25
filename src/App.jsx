@@ -135,6 +135,38 @@ function AdminPanel() {
   const [manualMovie, setManualMovie] = useState({ movie_name: '', category: '', poster: '', movie_link: '' });
   const [manualBusy, setManualBusy] = useState(false);
   const [manualMessage, setManualMessage] = useState('');
+  const [adminMovies, setAdminMovies] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  async function loadAdminMovies() {
+    if (!token.trim()) return;
+    setAdminLoading(true);
+    try {
+      const response = await fetch('/api/movies?admin=1&limit=500&offset=0', { headers: { Authorization: 'Bearer ' + token.trim() } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load movie library.');
+      setAdminMovies(data.movies || []);
+    } catch (err) { setError(err.message || 'Could not load movie library.'); }
+    finally { setAdminLoading(false); }
+  }
+
+  async function deleteMovie(id) {
+    if (!window.confirm('Delete this movie from the public catalogue?')) return;
+    try {
+      const response = await fetch('/api/movies', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() }, body: JSON.stringify({ id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Delete failed.');
+      setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
+      setManualMessage('Movie deleted from the catalogue.');
+    } catch (err) { setError(err.message || 'Delete failed.'); }
+  }
+
+  function editMovie(movie) {
+    setEditingId(movie.id);
+    setManualMovie({ movie_name: movie.movie_name || '', category: movie.category || '', poster: movie.poster || '', movie_link: movie.movie_link || '' });
+    document.getElementById('movie-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
   async function publishMovie(event) {
     event.preventDefault();
@@ -144,14 +176,16 @@ function AdminPanel() {
     window.localStorage.setItem('archive-admin-token', token.trim());
     try {
       const response = await fetch('/api/movies', {
-        method: 'POST',
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
-        body: JSON.stringify(manualMovie),
+        body: JSON.stringify(editingId ? { ...manualMovie, id: editingId } : manualMovie),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not publish movie.');
-      setManualMessage('Published successfully. This movie is now visible in the public catalog.');
+      setManualMessage(editingId ? 'Movie updated successfully.' : 'Published successfully. This movie is now visible in the public catalog.');
       setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+      setEditingId(null);
+      await loadAdminMovies();
     } catch (err) {
       setManualMessage(err.message || 'Publish failed.');
     } finally {
@@ -175,6 +209,7 @@ function AdminPanel() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Import request failed.');
       setResult(data);
+      await loadAdminMovies();
     } catch (err) {
       setError(err.message || 'Import failed. Please try again.');
     } finally {
@@ -202,19 +237,19 @@ function AdminPanel() {
         <div className="dashboard-section-heading">
           <p className="eyebrow">ADMIN ACCESS</p>
           <h2>Admin session</h2>
-          <p>Enter your admin token once. It will be remembered on this device for future visits.</p>
+          <p>Enter your dashboard password. It will be remembered on this device for future visits.</p>
         </div>
         <form className="admin-form" onSubmit={event => { event.preventDefault(); window.localStorage.setItem('archive-admin-token', token.trim()); setError(''); }}>
-          <label>ADMIN TOKEN
-            <input type="password" autoComplete="current-password" value={token} onChange={e => { setToken(e.target.value); window.localStorage.setItem('archive-admin-token', e.target.value.trim()); }} placeholder="MOVIES_ADMIN_TOKEN" required />
+          <label>ADMIN PASSWORD
+            <input type="password" autoComplete="current-password" value={token} onChange={e => { setToken(e.target.value); window.localStorage.setItem('archive-admin-token', e.target.value.trim()); }} placeholder="Enter dashboard password" required />
           </label>
-          <button className="admin-submit" type="submit">SAVE ADMIN SESSION</button>
+          <button className="admin-submit" type="submit" onClick={() => setTimeout(loadAdminMovies, 0)}>UNLOCK DASHBOARD</button>
         </form>
       </section>
-      <section className="dashboard-section">
+      <section className="dashboard-section" id="movie-editor">
         <div className="dashboard-section-heading">
           <p className="eyebrow">YOUR MOVIE LIBRARY</p>
-          <h2>Add your own movie</h2>
+          <h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2>
           <p>Enter a public HTTPS video URL. When you publish, the movie appears in the user catalog.</p>
         </div>
         <form className="admin-form" onSubmit={publishMovie}>
@@ -232,10 +267,21 @@ function AdminPanel() {
           <label>VIDEO URL (PUBLIC HTTPS MP4 / WEBM)
             <input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://your-host.com/movie.mp4" type="url" required />
           </label>
-          <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'PUBLISHING…' : 'PUBLISH TO USER CATALOG ↗'}</button>
+          <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'SAVING…' : editingId ? 'SAVE MOVIE CHANGES ↗' : 'PUBLISH TO USER CATALOG ↗'}</button>
+          {editingId && <button className="admin-clear" type="button" onClick={() => { setEditingId(null); setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' }); }}>CANCEL EDIT</button>}
         </form>
         {manualMessage && <div className="admin-message" role="status">{manualMessage}</div>}
         <p className="admin-security">The video must already be hosted at a public HTTPS address. A file on your PC cannot stream until it is uploaded to a video host or storage such as Cloudflare R2.</p>
+      </section>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading">
+          <p className="eyebrow">MANAGE PUBLISHED MOVIES</p>
+          <h2>Movie library</h2>
+          <p>Edit or remove movies already visible to visitors.</p>
+        </div>
+        <button className="admin-submit" type="button" onClick={loadAdminMovies} disabled={adminLoading}>{adminLoading ? 'LOADING…' : 'REFRESH MOVIE LIBRARY'}</button>
+        <div className="admin-imported">{adminMovies.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category || 'Uncategorized'} · <button type="button" className="admin-inline" onClick={() => editMovie(movie)}>EDIT</button> · <button type="button" className="admin-inline danger" onClick={() => deleteMovie(movie.id)}>DELETE</button></span></div>)}</div>
+        <p className="admin-security">{adminMovies.length} movie records loaded.</p>
       </section>
       <section className="dashboard-section">
         <div className="dashboard-section-heading">
@@ -266,7 +312,7 @@ function AdminPanel() {
         {result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}
         <a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a>
       </section>}
-      <p className="admin-security">Your admin token is stored only in this browser's local storage and is sent over HTTPS. It is never included in the public movie catalog.</p>
+      <p className="admin-security">Your dashboard password is stored only in this browser's local storage and is sent over HTTPS. It is never included in the public movie catalog.</p>
       <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
       </section>
     </section>
