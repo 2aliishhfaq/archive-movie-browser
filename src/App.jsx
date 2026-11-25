@@ -439,7 +439,7 @@ function MovieBrowser() {
         {playback.status === 'idle' || playback.status === 'resolving'
           ? <div className="player-loading" role="status"><span className="player-spinner" /><strong>Preparing fast-start video…</strong><small>Finding the best browser-compatible Archive file</small></div>
           : activeVideoSource
-            ? <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback' })}>
+            ? <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
                 <source src={activeVideoSource} type={getVideoMimeType(activeVideoSource) || undefined} />
                 <a href={activeVideoSource}>Open video source</a>
               </video>
