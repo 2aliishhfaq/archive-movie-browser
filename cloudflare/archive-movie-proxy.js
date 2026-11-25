@@ -672,9 +672,9 @@ async function handleFmp4Range(request, target, ctx) {
     });
   }
 
-  const end = requested.end === null
-    ? Math.min(requested.start + FMP4_RANGE_CHUNK_BYTES - 1, total - 1)
-    : Math.min(requested.end, total - 1);
+  // Preserve the browser's full requested byte window. The body still pulls one aligned
+  // 8 MiB edge-cache block at a time, so streaming stays incremental without truncating 206.
+  const end = requested.end === null ? total - 1 : Math.min(requested.end, total - 1);
   const responseHeaders = new Headers({
     ...cors,
     "Content-Type": "video/mp4",
