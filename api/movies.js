@@ -269,6 +269,6 @@ export default async function handler(req, res) {
     return json(res, 200, { deleted: true, id: String(rows[0].id) });
   } catch (error) {
     console.error('movies-api-error', error.message);
-    return json(res, 500, { error: 'Movie service temporarily unavailable' });
+    return json(res, 503, { error: 'Movie service temporarily unavailable' }, { 'Retry-After': '30' });
   }
 }
