@@ -170,18 +170,25 @@ test('streams a range spanning two aligned chunks without changing the requested
   } finally { env.restore(); }
 });
 
-test('caps an open-ended browser range to one 8 MiB response instead of downloading the rest of the film', async () => {
+test('streams an open-ended browser range through aligned 8 MiB cache blocks', async () => {
   const env = setup();
   try {
     const response = await env.request('bytes=0-');
     assert.equal(response.status, 206);
-    assert.equal(response.headers.get('Content-Range'), 'bytes 0-' + (CHUNK - 1) + '/' + TOTAL);
-    assert.equal(response.headers.get('Content-Length'), String(CHUNK));
+    assert.equal(response.headers.get('Content-Range'), 'bytes 0-' + (TOTAL - 1) + '/' + TOTAL);
+    assert.equal(response.headers.get('Content-Length'), String(TOTAL));
     const body = new Uint8Array(await response.arrayBuffer());
-    assert.equal(body.byteLength, CHUNK);
+    assert.equal(body.byteLength, TOTAL);
     assert.deepEqual(body.slice(0, 32), makeBytes(0, 32));
+    assert.deepEqual(body.slice(CHUNK - 8, CHUNK + 8), makeBytes(CHUNK - 8, 16));
+    assert.deepEqual(body.slice(TOTAL - 16), makeBytes(TOTAL - 16, 16));
     await env.flushCache();
-    assert.deepEqual(env.upstreamCalls.map(call => call.range), ['bytes=0-' + (CHUNK - 1)]);
+    assert.deepEqual(env.upstreamCalls.map(call => call.range), [
+      'bytes=0-' + (CHUNK - 1),
+      'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1),
+      'bytes=' + (CHUNK * 2) + '-' + (TOTAL - 1)
+    ]);
+    assert.equal(env.entries.size, 3);
   } finally { env.restore(); }
 });
 
