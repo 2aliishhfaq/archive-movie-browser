@@ -186,7 +186,7 @@ test('streams an open-ended browser range through aligned 8 MiB cache blocks', a
     assert.deepEqual(env.upstreamCalls.map(call => call.range), [
       'bytes=0-' + (CHUNK - 1),
       'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1),
-      'bytes=' + (CHUNK * 2) + '-' + (TOTAL - 1)
+      'bytes=' + (CHUNK * 2) + '-' + (CHUNK * 3 - 1)
     ]);
     assert.equal(env.entries.size, 3);
   } finally { env.restore(); }
