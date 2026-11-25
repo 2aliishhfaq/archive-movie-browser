@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -72,6 +72,88 @@ function isDirectVideoUrl(source) {
   return Boolean(getVideoMimeType(source));
 }
 
+function isHlsSource(source) {
+  try { return /\\.m3u8?$/i.test(new URL(source).pathname); }
+  catch { return false; }
+}
+
+let hlsLibraryPromise;
+function loadHlsJs() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (hlsLibraryPromise) return hlsLibraryPromise;
+  hlsLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.7.4/dist/hls.min.js';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    script.onload = () => window.Hls ? resolve(window.Hls) : reject(new Error('HLS.js failed to initialize'));
+    script.onerror = () => reject(new Error('Could not load HLS playback engine'));
+    document.head.appendChild(script);
+  });
+  return hlsLibraryPromise;
+}
+
+function HlsVideoPlayer({ source, poster, onPlaybackError }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    let hls = null;
+    let active = true;
+    const proxyUrl = CATALOG_EDGE_URL + '/hls?url=' + encodeURIComponent(source);
+
+    const startPlayback = async () => {
+      // Safari and some TV browsers have native HLS decoders.
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = proxyUrl;
+        video.load();
+        video.play().catch(() => {});
+        return;
+      }
+
+      const Hls = await loadHlsJs();
+      if (!active) return;
+      if (!Hls.isSupported()) {
+        onPlaybackError?.();
+        return;
+      }
+
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        capLevelToPlayerSize: true,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        backBufferLength: 30,
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data?.fatal) onPlaybackError?.();
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+      hls.loadSource(proxyUrl);
+      hls.attachMedia(video);
+    };
+
+    startPlayback().catch(() => {
+      if (active) onPlaybackError?.();
+    });
+
+    return () => {
+      active = false;
+      if (hls) hls.destroy();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, [source, onPlaybackError]);
+
+  return <video ref={videoRef} controls autoPlay playsInline preload="auto" poster={poster || undefined}
+    onError={() => onPlaybackError?.()} />;
+}
+
 function getArchiveItemIdentifier(source) {
   try {
     const url = new URL(source);
@@ -111,6 +193,7 @@ function pickArchiveVideoFile(files = []) {
 }
 
 async function resolveArchivePlaybackSources(source, signal) {
+  if (isHlsSource(source)) return [source];
   const directSource = isDirectVideoUrl(source) ? source : null;
   const identifier = getArchiveItemIdentifier(source);
   if (!identifier) return directSource ? [directSource] : [];
@@ -439,15 +522,18 @@ function MovieBrowser() {
         {playback.status === 'idle' || playback.status === 'resolving'
           ? <div className="player-loading" role="status"><span className="player-spinner" /><strong>Preparing fast-start video…</strong><small>Finding the best browser-compatible Archive file</small></div>
           : activeVideoSource
-            ? <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
-                <source src={activeVideoSource} type={getVideoMimeType(activeVideoSource) || undefined} />
-                <a href={activeVideoSource}>Open video source</a>
-              </video>
+            ? isHlsSource(activeVideoSource)
+              ? <HlsVideoPlayer key={activeVideoSource} source={activeVideoSource} poster={selected.poster}
+                  onPlaybackError={() => setPlayback(current => ({ ...current, status: 'fallback', sources: [], index: 0 }))} />
+              : <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
+                  <source src={activeVideoSource} type={getVideoMimeType(activeVideoSource) || undefined} />
+                  <a href={activeVideoSource}>Open video source</a>
+                </video>
             : archivePlayerUrl
               ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
               : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
       </div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? 'HTML5 STREAM' : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? (isHlsSource(activeVideoSource) ? 'HLS STREAM' : 'HTML5 STREAM') : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
