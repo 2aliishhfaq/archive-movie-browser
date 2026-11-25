@@ -7,7 +7,7 @@ function proxyUrl(source) {
   return PROXY + '?url=' + encodeURIComponent(source);
 }
 
-export default function App() {
+function MovieBrowser() {
   const [movies, setMovies] = useState([]);
   const [categories, setCategories] = useState([]);
   const [category, setCategory] = useState('');
@@ -88,11 +88,97 @@ export default function App() {
       : !error && <div className="empty"><span>✳</span><h3>No films found</h3><p>Try another title or category.</p></div>}
       <div className="pagination"><button disabled={page===0 || loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>PAGE {page+1} OF {Math.max(1,Math.ceil(total/pageSize))}</span><button disabled={loading || (page+1)*pageSize>=total} onClick={()=>setPage(p=>p+1)}>Next →</button></div>
     </section>
-    <footer><span>ARCHIVE / MOVIES</span><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></footer>
+    <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="/admin">CATALOG ADMIN ↗</a><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       <div className="video-frame"><video controls autoPlay playsInline poster={selected.poster || undefined} src={proxyUrl(selected.movie_link)}><a href={selected.movie_link}>Open video at Internet Archive</a></video></div>
       <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a href={selected.movie_link} target="_blank" rel="noreferrer">SOURCE ↗</a></div>
     </section></div>}
   </main>;
+}
+
+
+function AdminPanel() {
+  const [token, setToken] = useState(() => window.sessionStorage.getItem('archive-admin-token') || '');
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('Feature Films');
+  const [limit, setLimit] = useState(6);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setResult(null);
+    if (!token.trim()) { setError('Enter your admin token to continue.'); return; }
+    setBusy(true);
+    window.sessionStorage.setItem('archive-admin-token', token.trim());
+    try {
+      const response = await fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
+        body: JSON.stringify({ query, category, limit }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Import request failed.');
+      setResult(data);
+    } catch (err) {
+      setError(err.message || 'Import failed. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function clearToken() {
+    window.sessionStorage.removeItem('archive-admin-token');
+    setToken('');
+    setResult(null);
+    setError('');
+  }
+
+  return <main className="admin-shell">
+    <header className="topbar">
+      <a className="brand" href="/" aria-label="Back to Archive Movies"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / ADMIN</span></span></a>
+      <a className="admin-back" href="/">← BACK TO CATALOG</a>
+    </header>
+    <section className="admin-content">
+      <p className="eyebrow">COLLECTION MANAGEMENT</p>
+      <h1>Bring films<br/><em>into the archive.</em></h1>
+      <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
+      <form className="admin-form" onSubmit={handleSubmit}>
+        <label>ADMIN TOKEN
+          <input type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} placeholder="Paste MOVIES_ADMIN_TOKEN" required />
+        </label>
+        <label>SEARCH INTERNET ARCHIVE
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Leave blank to browse the Feature Films collection" maxLength={120} />
+        </label>
+        <div className="admin-fields">
+          <label>CATALOG CATEGORY
+            <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Feature Films" maxLength={100} />
+          </label>
+          <label>IMPORT LIMIT
+            <select value={limit} onChange={e => setLimit(Number(e.target.value))}>
+              <option value={3}>3 films</option><option value={6}>6 films</option><option value={8}>8 films</option>
+            </select>
+          </label>
+        </div>
+        <button className="admin-submit" type="submit" disabled={busy}>{busy ? 'IMPORTING FILMS…' : 'SEARCH & IMPORT FILMS ↗'}</button>
+      </form>
+      {error && <div className="admin-message admin-error" role="alert">{error}</div>}
+      {result && <section className="admin-result" aria-live="polite">
+        <div className="admin-stats"><div><strong>{result.importedCount}</strong><span>IMPORTED</span></div><div><strong>{result.skippedCount}</strong><span>SKIPPED</span></div><div><strong>{result.totalFound}</strong><span>FOUND</span></div></div>
+        <p>{result.message}</p>
+        {result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}
+        <a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a>
+      </section>}
+      <p className="admin-security">Your token stays in this browser tab only. It is sent to the server over HTTPS and is never included in the public movie catalog.</p>
+      <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
+    </section>
+    <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
+  </main>;
+}
+
+export default function App() {
+  return window.location.pathname === '/admin' ? <AdminPanel /> : <MovieBrowser />;
 }
