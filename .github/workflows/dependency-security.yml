@@ -34,6 +34,9 @@ jobs:
       - name: Repair dependency tree and lockfile
         run: npm audit fix
 
+      - name: Install MCP test dependencies
+        run: npm ci --prefix mcp
+
       - name: Verify dependency audit
         run: npm audit --audit-level=moderate
 
