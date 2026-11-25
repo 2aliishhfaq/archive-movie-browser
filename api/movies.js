@@ -100,6 +100,108 @@ function validateMovie(body) {
   if (!validMovieLink(movie_link)) return 'movie_link must be an HTTPS Internet Archive URL';
   return { movie_name, category: category || null, poster, movie_link };
 }
+
+function pickPlayableFile(files = []) {
+  const extensions = { mp4: 100, m4v: 95, webm: 80, ogv: 65, ogg: 60, mov: 50, mpg: 40, mpeg: 40, mkv: 35 };
+  return files
+    .filter(file => file && typeof file.name === 'string' && file.name.length < 500)
+    .map(file => {
+      const ext = file.name.split('.').pop().toLowerCase();
+      const size = Number(file.size || 0);
+      return { file, score: (extensions[ext] || 0) + (size > 5_000_000 ? 5 : 0) };
+    })
+    .filter(item => item.score > 0 && (!item.file.source || item.file.source === 'original'))
+    .sort((a, b) => b.score - a.score || Number(b.file.size || 0) - Number(a.file.size || 0))[0]?.file || null;
+}
+
+function archiveDownloadUrl(identifier, filename) {
+  return 'https://archive.org/download/' + encodeURIComponent(identifier) + '/' +
+    filename.split('/').map(encodeURIComponent).join('/');
+}
+
+async function importArchiveMovies(body, sql, res) {
+  const requestedQuery = typeof body.query === 'string' ? body.query.trim().slice(0, 120) : '';
+  const category = typeof body.category === 'string' ? body.category.trim().slice(0, 100) : '';
+  const limit = Math.min(5, Math.max(1, Number.parseInt(body.limit, 10) || 5));
+  const safeQuery = requestedQuery
+    .replaceAll('"', '')
+    .replaceAll('[', ' ').replaceAll(']', ' ')
+    .replaceAll('{', ' ').replaceAll('}', ' ')
+    .replaceAll(':', ' ').replaceAll('*', ' ')
+    .split(' ').filter(Boolean).join(' ');
+  const searchQuery = safeQuery
+    ? 'mediatype:movies AND (' + safeQuery + ')'
+    : 'mediatype:movies AND collection:feature_films';
+
+  const searchUrl = new URL('https://archive.org/advancedsearch.php');
+  searchUrl.searchParams.set('q', searchQuery);
+  searchUrl.searchParams.append('fl[]', 'identifier');
+  searchUrl.searchParams.append('fl[]', 'title');
+  searchUrl.searchParams.set('rows', String(limit));
+  searchUrl.searchParams.set('page', '1');
+  searchUrl.searchParams.set('output', 'json');
+  searchUrl.searchParams.append('sort[]', 'downloads desc');
+
+  try {
+    const searchResponse = await fetch(searchUrl, { signal: AbortSignal.timeout(9000) });
+    if (!searchResponse.ok) throw new Error('Internet Archive search HTTP ' + searchResponse.status);
+    const searchData = await searchResponse.json();
+    const docs = searchData?.response?.docs || [];
+    if (!docs.length) {
+      return json(res, 200, { imported: [], importedCount: 0, skippedCount: 0, totalFound: 0, message: 'No matching Internet Archive films were found.' });
+    }
+
+    const seen = new Set();
+    const processed = await Promise.all(docs.map(async doc => {
+      const identifier = String(doc.identifier || '').trim();
+      if (!/^[a-zA-Z0-9._-]{1,200}$/.test(identifier) || seen.has(identifier)) return null;
+      seen.add(identifier);
+      try {
+        const metadataResponse = await fetch('https://archive.org/metadata/' + encodeURIComponent(identifier), {
+          signal: AbortSignal.timeout(7000),
+        });
+        if (!metadataResponse.ok) return null;
+        const metadataData = await metadataResponse.json();
+        const metadata = metadataData.metadata || {};
+        const mediaFile = pickPlayableFile(metadataData.files);
+        if (!mediaFile) return null;
+
+        const movieLink = archiveDownloadUrl(identifier, mediaFile.name);
+        const existing = await sql`SELECT id FROM public.movies WHERE movie_link = ${movieLink} LIMIT 1`;
+        if (existing.length) return null;
+
+        const title = String(metadata.title || doc.title || identifier).trim().slice(0, 240);
+        const poster = 'https://archive.org/services/img/' + encodeURIComponent(identifier);
+        const rawSubject = metadata.subject;
+        const firstSubject = Array.isArray(rawSubject) ? rawSubject[0] : rawSubject;
+        const movieCategory = category || (typeof firstSubject === 'string' && firstSubject.trim()
+          ? firstSubject.trim().slice(0, 100) : 'Feature Films');
+        const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link)
+          VALUES (${title}, ${movieCategory}, ${poster}, ${movieLink})
+          RETURNING id, movie_name, category, poster, movie_link`;
+        return rows[0] || null;
+      } catch (error) {
+        console.error('archive-import-item-failed', identifier, error.message);
+        return null;
+      }
+    }));
+
+    const imported = processed.filter(Boolean);
+    const skippedCount = docs.length - imported.length;
+    if (imported.length) await invalidateCache();
+    return json(res, 200, {
+      imported,
+      importedCount: imported.length,
+      skippedCount,
+      totalFound: docs.length,
+      message: imported.length ? 'Internet Archive films imported successfully.' : 'No new playable films were imported. Existing records and unsupported formats were skipped.',
+    });
+  } catch (error) {
+    console.error('archive-import-failed', error.message);
+    return json(res, 502, { error: 'Internet Archive import failed. Please retry in a moment.' });
+  }
+}
+
 export default async function handler(req, res) {
   const method = req.method || 'GET';
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) {
@@ -135,6 +237,7 @@ export default async function handler(req, res) {
     }
     if (method === 'POST') {
       const body = await readBody(req);
+      if (body.action === 'import') return await importArchiveMovies(body, sql, res);
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
       const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link) VALUES (${movie.movie_name}, ${movie.category}, ${movie.poster}, ${movie.movie_link}) RETURNING id, movie_name, category, poster, movie_link`;
