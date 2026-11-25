@@ -95,7 +95,7 @@ function MovieBrowser() {
     let deferred = null;
     let active = true;
     const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-    const checkInstallState = async () => {
+    const checkInstallState = async (forcePrompt = false) => {
       if (!active || isStandalone()) { setShowInstallNotice(false); return; }
       let installed = false;
       if (typeof navigator.getInstalledRelatedApps === 'function') {
@@ -111,7 +111,7 @@ function MovieBrowser() {
       }
       const lastCheck = Number(localStorage.getItem('reelbox-install-last-check') || 0);
       const dismissedUntil = Number(localStorage.getItem('reelbox-install-dismissed-until') || 0);
-      if (!lastCheck || Date.now() - lastCheck >= INSTALL_CHECK_INTERVAL) {
+      if (forcePrompt || !lastCheck || Date.now() - lastCheck >= INSTALL_CHECK_INTERVAL) {
         localStorage.setItem('reelbox-install-last-check', String(Date.now()));
         localStorage.removeItem('reelbox-pwa-installed');
         if (Date.now() >= dismissedUntil && deferred) setShowInstallNotice(true);
