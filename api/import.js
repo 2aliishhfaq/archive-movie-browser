@@ -131,7 +131,7 @@ export default async function handler(req, res) {
     const skippedCount = docs.length - imported.length;
 
     if (imported.length) {
-      const restUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+      let restUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
       const restToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
       if (restUrl && restToken) {
         try {
