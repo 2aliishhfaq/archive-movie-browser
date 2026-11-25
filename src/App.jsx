@@ -2,23 +2,23 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 
-function archiveEmbedUrl(source) {
+function getArchiveEmbedUrl(source) {
   try {
     const url = new URL(source);
+    const host = url.hostname.toLowerCase();
+    if (host !== 'archive.org' && !host.endsWith('.archive.org')) return null;
     const parts = url.pathname.split('/').filter(Boolean);
-    if (parts[0] !== 'download' || parts.length < 3) return source;
-    const identifier = parts[1];
-    const filename = decodeURIComponent(parts.slice(2).join('/'));
-    return 'https://archive.org/embed/' + encodeURIComponent(identifier) +
-      '?autoplay=1&file=' + encodeURIComponent(filename);
-  } catch { return source; }
-}
-
-function browserPlayable(source) {
-  try {
-    const pathname = new URL(source).pathname.toLowerCase();
-    return /\.(mp4|m4v|webm|ogv|ogg)$/.test(pathname);
-  } catch { return false; }
+    const route = parts[0];
+    if (!['download', 'details', 'embed'].includes(route) || !parts[1]) return null;
+    const identifier = decodeURIComponent(parts[1]);
+    const embed = new URL('https://archive.org/embed/' + encodeURIComponent(identifier));
+    if (route === 'download' && parts.length > 2) {
+      const filename = decodeURIComponent(parts.slice(2).join('/'));
+      embed.searchParams.set('file', filename);
+    }
+    embed.searchParams.set('autoplay', '1');
+    return embed.toString();
+  } catch { return null; }
 }
 
 function MovieBrowser() {
@@ -29,7 +29,8 @@ function MovieBrowser() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
-  const [useArchivePlayer, setUseArchivePlayer] = useState(false);
+  const [playerMode, setPlayerMode] = useState('archive');
+  const [playerError, setPlayerError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
@@ -72,13 +73,18 @@ function MovieBrowser() {
 
   useEffect(() => { setPage(0); }, [query, category]);
 
+  const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
+
   useEffect(() => {
-    let archiveSource = false;
-    try {
-      const host = new URL(selected?.movie_link || '').hostname.toLowerCase();
-      archiveSource = host === 'archive.org' || host.endsWith('.archive.org');
-    } catch { /* Invalid URLs stay in the standard player's error state. */ }
-    setUseArchivePlayer(Boolean(selected && archiveSource && !browserPlayable(selected.movie_link)));
+    setPlayerMode(archivePlayerUrl ? 'archive' : 'html5');
+    setPlayerError('');
+  }, [selected, archivePlayerUrl]);
+
+  useEffect(() => {
+    if (!selected) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
   }, [selected]);
 
   useEffect(() => {
@@ -110,14 +116,15 @@ function MovieBrowser() {
     <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
-      <div className="video-frame">{useArchivePlayer
-        ? <iframe title={selected.movie_name + ' — Internet Archive player'} src={archiveEmbedUrl(selected.movie_link)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen loading="eager" />
-        : <video controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => {
-          try {
-            const host = new URL(selected.movie_link).hostname.toLowerCase();
-            if (host === 'archive.org' || host.endsWith('.archive.org')) setUseArchivePlayer(true);
-          } catch { /* Keep the source link available if a host rejects playback. */ }
-        }}><a href={selected.movie_link}>Open video source</a></video>}</div>
+      <div className="video-frame">{playerMode === 'archive' && archivePlayerUrl
+        ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive player'} src={archivePlayerUrl} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
+        : <video key={selected.movie_link} controls playsInline preload="metadata" poster={selected.poster || undefined} src={selected.movie_link} onError={() => setPlayerError('This direct video file could not be played by your browser. Try the Internet Archive player or open the source file.')}><a href={selected.movie_link}>Open video source</a></video>}</div>
+      {archivePlayerUrl && <div className="player-switch" role="group" aria-label="Choose video player">
+        <span>PLAYBACK</span>
+        <button type="button" className={playerMode === 'archive' ? 'active' : ''} onClick={() => { setPlayerMode('archive'); setPlayerError(''); }}>INTERNET ARCHIVE PLAYER</button>
+        <button type="button" className={playerMode === 'html5' ? 'active' : ''} onClick={() => { setPlayerMode('html5'); setPlayerError(''); }}>DIRECT HTML5 PLAYER</button>
+      </div>}
+      {playerError && <div className="player-error" role="alert">{playerError} <a href={selected.movie_link} target="_blank" rel="noreferrer">Open source ↗</a></div>}
       <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={selected.movie_link} target="_blank" rel="noopener noreferrer" aria-label={'Download ' + selected.movie_name}>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
