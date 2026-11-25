@@ -1,6 +1,5 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
-import { Redis } from '@upstash/redis';
 
 const CACHE_TTL = 300;
 const CACHE_VERSION_KEY = 'movies:cache-version';
@@ -34,26 +33,35 @@ const redisConfig = () => ({
   token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 const redisReady = () => Boolean(redisConfig().url && redisConfig().token);
-let redisClient;
-function getRedis() {
+async function redisPipeline(commands) {
   if (!redisReady()) return null;
-  if (!redisClient) redisClient = new Redis(redisConfig());
-  return redisClient;
+  const { url, token } = redisConfig();
+  const response = await fetch(url.replace(/\\/+$/, '') + '/pipeline', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(commands),
+    signal: AbortSignal.timeout(2500),
+  });
+  if (!response.ok) throw new Error('Redis HTTP ' + response.status);
+  const entries = await response.json();
+  const failed = entries.find(entry => entry.error);
+  if (failed) throw new Error('Redis command failed: ' + failed.error);
+  return entries.map(entry => entry.result);
 }
 async function cached(key, load) {
-  const redis = getRedis();
-  if (!redis) return { value: await load(), hit: false, configured: false };
+  if (!redisReady()) return { value: await load(), hit: false, configured: false };
   try {
-    let version = await redis.get(CACHE_VERSION_KEY);
+    let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
     if (!version) {
-      await redis.set(CACHE_VERSION_KEY, '1', { nx: true });
-      version = await redis.get(CACHE_VERSION_KEY) || '1';
+      await redisPipeline([['SET', CACHE_VERSION_KEY, '1', 'NX']]);
+      [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+      version ||= '1';
     }
     const cacheKey = 'movies:v' + version + ':' + key;
-    const stored = await redis.get(cacheKey);
-    if (stored !== null && stored !== undefined) return { value: stored, hit: true, configured: true };
+    const [stored] = await redisPipeline([['GET', cacheKey]]);
+    if (stored) return { value: JSON.parse(stored), hit: true, configured: true };
     const value = await load();
-    await redis.set(cacheKey, value, { ex: CACHE_TTL });
+    await redisPipeline([['SET', cacheKey, JSON.stringify(value), 'EX', String(CACHE_TTL)]]);
     return { value, hit: false, configured: true };
   } catch (error) {
     console.error('redis-cache-bypass', error.message);
@@ -61,9 +69,8 @@ async function cached(key, load) {
   }
 }
 async function invalidateCache() {
-  const redis = getRedis();
-  if (!redis) return;
-  try { await redis.incr(CACHE_VERSION_KEY); }
+  if (!redisReady()) return;
+  try { await redisPipeline([['INCR', CACHE_VERSION_KEY]]); }
   catch (error) { console.error('redis-invalidation-failed', error.message); }
 }
 function readBody(req) {
