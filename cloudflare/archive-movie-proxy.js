@@ -6,7 +6,7 @@ const cors = {
 };
 const allowed = host => host === "archive.org" || host.endsWith(".archive.org");
 const jsonHeaders = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
-const CATALOG_ORIGIN = "https://reelbox-red.vercel.app/api/movies";
+const CATALOG_ORIGIN = "https://reelboxe.vercel.app/api/movies";
 const FRESH_TTL = 300;
 const STALE_TTL = 86400;
 
