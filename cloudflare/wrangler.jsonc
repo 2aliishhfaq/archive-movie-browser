@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "archive-movie-proxy",
+  "main": "./worker-entry.js",
+  "compatibility_date": "2026-11-25",
+  "compatibility_flags": [
+    "enable_ctx_exports"
+  ],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "cache": {
+    "enabled": true
+  },
+  "exports": {
+    "default": {
+      "type": "worker",
+      "cache": {
+        "enabled": false
+      }
+    },
+    "Fmp4RangeCache": {
+      "type": "worker",
+      "cache": {
+        "enabled": true
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getArchiveStreamUrl, isFmp4FileName } from './services/archiveStream.js';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -56,9 +57,6 @@ const VIDEO_MIME_TYPES = {
   mp4: 'video/mp4',
   m4v: 'video/mp4',
   mpeg4: 'video/mp4',
-  webm: 'video/webm',
-  ogv: 'video/ogg',
-  ogg: 'video/ogg',
 };
 
 function getVideoMimeType(source) {
@@ -169,7 +167,7 @@ function getArchiveItemIdentifier(source) {
 
 function getArchiveVideoCandidates(files = []) {
   return files
-    .filter(file => file && typeof file.name === 'string' && file.name.length < 500)
+    .filter(file => file && typeof file.name === 'string' && file.name.length < 500 && isFmp4FileName(file.name))
     .map(file => {
       const extension = file.name.split('.').pop().toLowerCase();
       const name = file.name.toLowerCase();
@@ -181,8 +179,7 @@ function getArchiveVideoCandidates(files = []) {
         else if (format.includes('h.264') || format.includes('h264')) score += 150;
         else if (/_512kb\.mp4$/.test(name)) score += 80;
         if (file.source && file.source !== 'original') score += 10;
-      } else if (extension === 'webm') score = 760;
-      else if (extension === 'ogv' || extension === 'ogg') score = 620;
+      }
       return { file, score, size: Number(file.size || 0) };
     })
     .filter(item => item.score > 0)
@@ -517,7 +514,7 @@ function MovieBrowser() {
     </div>}
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
       <div className="player-modal-top">
-        <span>NOW PLAYING · HTML5 PLAYER</span>
+        <span>NOW PLAYING · FMP4 RANGE PLAYER</span>
         <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       </div>
       <div className="video-frame">
@@ -527,15 +524,15 @@ function MovieBrowser() {
             ? isHlsSource(activeVideoSource)
               ? <HlsVideoPlayer key={activeVideoSource} source={activeVideoSource} poster={selected.poster}
                   onPlaybackError={() => setPlayback(current => ({ ...current, status: 'fallback', sources: [], index: 0 }))} />
-              : <video key={activeVideoSource} controls autoPlay playsInline preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
-                  <source src={activeVideoSource} type={getVideoMimeType(activeVideoSource) || undefined} />
+              : <video key={activeVideoSource} controls autoPlay playsInline crossOrigin="anonymous" preload="auto" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
+                  <source src={getArchiveStreamUrl(activeVideoSource)} type="video/mp4" />
                   <a href={activeVideoSource}>Open video source</a>
                 </video>
             : archivePlayerUrl
               ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
               : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
       </div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? (isHlsSource(activeVideoSource) ? 'HLS STREAM' : 'HTML5 STREAM') : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? (isHlsSource(activeVideoSource) ? 'HLS STREAM' : 'FMP4 BYTE-RANGE STREAM') : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
