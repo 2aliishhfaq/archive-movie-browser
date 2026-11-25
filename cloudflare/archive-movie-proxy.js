@@ -464,6 +464,18 @@ function parseContentRange(value) {
   return { start, end, total };
 }
 
+// Workers only emits an explicit Content-Length for a FixedLengthStream (or a buffered body).
+// Keep media bytes streamed end-to-end while still giving HTML5 demuxers an exact range length.
+function withFixedLengthStream(body, length) {
+  const FixedLength = globalThis.FixedLengthStream;
+  if (!body || typeof FixedLength !== "function" || !Number.isSafeInteger(length) || length < 0) {
+    return body;
+  }
+  const fixed = new FixedLength(length);
+  body.pipeTo(fixed.writable).catch(() => {});
+  return fixed.readable;
+}
+
 // Stream just the requested byte window from an aligned cache block.
 function sliceByteStream(body, offset, length) {
   const reader = body.getReader();
@@ -549,7 +561,8 @@ export async function createFmp4CacheBlock(request) {
   const lastModified = upstream.headers.get("Last-Modified");
   if (etag) headers.set("ETag", etag);
   if (lastModified) headers.set("Last-Modified", lastModified);
-  return new Response(upstream.body, { status: 200, headers });
+  const blockLength = range.end - range.start + 1;
+  return new Response(withFixedLengthStream(upstream.body, blockLength), { status: 200, headers });
 }
 
 async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
@@ -676,10 +689,12 @@ async function handleFmp4Range(request, target, ctx) {
   if (firstBlock.etag) responseHeaders.set("ETag", firstBlock.etag);
   if (firstBlock.lastModified) responseHeaders.set("Last-Modified", firstBlock.lastModified);
 
-  return new Response(
-    fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end, total),
-    { status: 206, headers: responseHeaders }
-  );
+  const responseLength = end - requested.start + 1;
+  const body = fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end, total);
+  return new Response(withFixedLengthStream(body, responseLength), {
+    status: 206,
+    headers: responseHeaders
+  });
 }
 
 async function handleStreamProxy(request, ctx) {
