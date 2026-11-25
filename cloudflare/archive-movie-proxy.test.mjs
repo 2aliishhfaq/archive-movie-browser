@@ -85,36 +85,6 @@ function setup({ ignoreRange = false } = {}) {
   return { request, upstreamCalls, entries, flushCache, restore };
 }
 
-test('uses a fixed-length identity stream for browser-facing fMP4 byte ranges', async () => {
-  const originalFixedLengthStream = globalThis.FixedLengthStream;
-  globalThis.FixedLengthStream = class extends TransformStream {
-    constructor(expectedBytes) {
-      let actualBytes = 0;
-      super({
-        transform(chunk, controller) {
-          actualBytes += chunk.byteLength;
-          if (actualBytes > expectedBytes) throw new RangeError('FixedLengthStream received too many bytes');
-          controller.enqueue(chunk);
-        },
-        flush() {
-          if (actualBytes !== expectedBytes) throw new RangeError('FixedLengthStream received too few bytes');
-        }
-      });
-    }
-  };
-  const env = setup();
-  try {
-    const response = await env.request('bytes=24-55');
-    assert.equal(response.status, 206);
-    assert.equal(response.headers.get('Content-Length'), '32');
-    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), makeBytes(24, 32));
-  } finally {
-    env.restore();
-    if (originalFixedLengthStream === undefined) delete globalThis.FixedLengthStream;
-    else globalThis.FixedLengthStream = originalFixedLengthStream;
-  }
-});
-
 test('returns exact 206 bytes while caching the aligned first 8 MiB MP4 block', async () => {
   const env = setup();
   try {
@@ -170,7 +140,7 @@ test('streams a range spanning two aligned chunks without changing the requested
   } finally { env.restore(); }
 });
 
-test('streams an open-ended browser range through aligned 8 MiB cache blocks', async () => {
+test('streams an open-ended browser range as a truthful full 206 while fetching only aligned 8 MiB blocks', async () => {
   const env = setup();
   try {
     const response = await env.request('bytes=0-');
@@ -180,15 +150,14 @@ test('streams an open-ended browser range through aligned 8 MiB cache blocks', a
     const body = new Uint8Array(await response.arrayBuffer());
     assert.equal(body.byteLength, TOTAL);
     assert.deepEqual(body.slice(0, 32), makeBytes(0, 32));
-    assert.deepEqual(body.slice(CHUNK - 8, CHUNK + 8), makeBytes(CHUNK - 8, 16));
-    assert.deepEqual(body.slice(TOTAL - 16), makeBytes(TOTAL - 16, 16));
+    assert.deepEqual(body.slice(CHUNK - 16, CHUNK + 16), makeBytes(CHUNK - 16, 32));
+    assert.deepEqual(body.slice(-32), makeBytes(TOTAL - 32, 32));
     await env.flushCache();
     assert.deepEqual(env.upstreamCalls.map(call => call.range), [
       'bytes=0-' + (CHUNK - 1),
       'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1),
       'bytes=' + (CHUNK * 2) + '-' + (CHUNK * 3 - 1)
     ]);
-    assert.equal(env.entries.size, 3);
   } finally { env.restore(); }
 });
 

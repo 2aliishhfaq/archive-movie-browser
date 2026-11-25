@@ -464,64 +464,6 @@ function parseContentRange(value) {
   return { start, end, total };
 }
 
-// Workers only emits an explicit Content-Length for a FixedLengthStream (or a buffered body).
-// Keep media bytes streamed end-to-end while still giving HTML5 demuxers an exact range length.
-/* global FixedLengthStream */
-function withFixedLengthStream(body, length) {
-  const FixedLength = typeof FixedLengthStream === "function" ? FixedLengthStream : null;
-  if (!body || !FixedLength || !Number.isSafeInteger(length) || length < 0) {
-    return body;
-  }
-  const fixed = new FixedLength(length);
-  body.pipeTo(fixed.writable).catch(() => {});
-  return fixed.readable;
-}
-
-// Stream just the requested byte window from an aligned cache block.
-function sliceByteStream(body, offset, length) {
-  const reader = body.getReader();
-  let skipped = 0;
-  let emitted = 0;
-  return new ReadableStream({
-    async pull(controller) {
-      try {
-        while (emitted < length) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            try { reader.releaseLock(); } catch {}
-            return;
-          }
-          let begin = 0;
-          if (skipped < offset) {
-            const drop = Math.min(offset - skipped, value.byteLength);
-            skipped += drop;
-            begin = drop;
-          }
-          if (begin >= value.byteLength) continue;
-          const count = Math.min(value.byteLength - begin, length - emitted);
-          if (!count) continue;
-          emitted += count;
-          controller.enqueue(value.subarray(begin, begin + count));
-          if (emitted >= length) {
-            controller.close();
-            try { await reader.cancel(); } catch {}
-            try { reader.releaseLock(); } catch {}
-          }
-          return;
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
-    },
-    async cancel(reason) {
-      try { await reader.cancel(reason); } catch {}
-      try { reader.releaseLock(); } catch {}
-    }
-  });
-}
-
 export async function createFmp4CacheBlock(request) {
   if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
   const url = new URL(request.url);
@@ -562,8 +504,7 @@ export async function createFmp4CacheBlock(request) {
   const lastModified = upstream.headers.get("Last-Modified");
   if (etag) headers.set("ETag", etag);
   if (lastModified) headers.set("Last-Modified", lastModified);
-  const blockLength = range.end - range.start + 1;
-  return new Response(withFixedLengthStream(upstream.body, blockLength), { status: 200, headers });
+  return new Response(upstream.body, { status: 200, headers });
 }
 
 async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
@@ -580,8 +521,10 @@ async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
       try { await response.body?.cancel(); } catch {}
       return null;
     }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== length) return null;
     return {
-      body: response.body, total, chunkStart,
+      bytes, total, chunkStart,
       contentType: response.headers.get("Content-Type") || "video/mp4",
       etag: response.headers.get("ETag"),
       lastModified: response.headers.get("Last-Modified"),
@@ -590,53 +533,27 @@ async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
   } catch { return null; }
 }
 
-function fmp4RangeBody(request, target, ctx, firstBlock, start, end, total) {
+function fmp4RangeBody(request, target, ctx, firstBlock, start, end) {
   let cursor = start;
   let nextBlock = firstBlock;
-  let reader = null;
-  let segmentEnd = cursor - 1;
-
-  async function pull(controller) {
-    try {
-      if (!reader) {
-        if (cursor > end) {
-          controller.close();
-          return;
-        }
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        if (cursor > end) { controller.close(); return; }
         const chunkStart = Math.floor(cursor / FMP4_RANGE_CHUNK_BYTES) * FMP4_RANGE_CHUNK_BYTES;
         const block = nextBlock && nextBlock.chunkStart === chunkStart
           ? nextBlock
           : await loadFmp4RangeBlock(request, target, ctx, chunkStart);
         nextBlock = null;
-        if (!block || block.passthrough || !block.body) {
-          throw new Error("Archive.org could not provide a complete aligned fMP4 byte block");
-        }
-        segmentEnd = Math.min(end, chunkStart + FMP4_RANGE_CHUNK_BYTES - 1, total - 1);
-        reader = sliceByteStream(block.body, cursor - chunkStart, segmentEnd - cursor + 1).getReader();
-      }
-
-      const { done, value } = await reader.read();
-      if (done) {
-        try { reader.releaseLock(); } catch {}
-        reader = null;
-        cursor = segmentEnd + 1;
+        if (!block || !block.bytes) throw new Error("Archive.org could not provide a complete aligned fMP4 byte block");
+        const offset = cursor - chunkStart;
+        if (offset < 0 || offset >= block.bytes.byteLength) throw new Error("fMP4 chunk offset is outside the cached block");
+        const count = Math.min(end - cursor + 1, block.bytes.byteLength - offset);
+        if (count < 1) throw new Error("fMP4 chunk returned no requested bytes");
+        controller.enqueue(block.bytes.subarray(offset, offset + count));
+        cursor += count;
         if (cursor > end) controller.close();
-        else return pull(controller);
-        return;
-      }
-      controller.enqueue(value);
-    } catch (error) {
-      controller.error(error);
-    }
-  }
-
-  return new ReadableStream({
-    pull,
-    async cancel(reason) {
-      if (reader) {
-        try { await reader.cancel(reason); } catch {}
-        try { reader.releaseLock(); } catch {}
-      }
+      } catch (error) { controller.error(error); }
     }
   });
 }
@@ -673,8 +590,8 @@ async function handleFmp4Range(request, target, ctx) {
     });
   }
 
-  // Preserve the browser's full requested byte window. The body still pulls one aligned
-  // 8 MiB edge-cache block at a time, so streaming stays incremental without truncating 206.
+  // For open-ended browser ranges, advertise the full remaining representation.
+  // The response body still pulls aligned 8 MiB blocks on demand and streams them.
   const end = requested.end === null ? total - 1 : Math.min(requested.end, total - 1);
   const responseHeaders = new Headers({
     ...cors,
@@ -690,14 +607,10 @@ async function handleFmp4Range(request, target, ctx) {
   if (firstBlock.etag) responseHeaders.set("ETag", firstBlock.etag);
   if (firstBlock.lastModified) responseHeaders.set("Last-Modified", firstBlock.lastModified);
 
-  const responseLength = end - requested.start + 1;
-  const body = fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end, total);
-  // Open-ended responses remain backpressure-driven; finite ranges advertise an exact length.
-  const responseBody = requested.end === null ? body : withFixedLengthStream(body, responseLength);
-  return new Response(responseBody, {
-    status: 206,
-    headers: responseHeaders
-  });
+  return new Response(
+    fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end),
+    { status: 206, headers: responseHeaders }
+  );
 }
 
 async function handleStreamProxy(request, ctx) {
