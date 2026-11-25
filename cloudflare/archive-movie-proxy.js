@@ -466,6 +466,7 @@ function parseContentRange(value) {
 
 // Workers only emits an explicit Content-Length for a FixedLengthStream (or a buffered body).
 // Keep media bytes streamed end-to-end while still giving HTML5 demuxers an exact range length.
+/* global FixedLengthStream */
 function withFixedLengthStream(body, length) {
   const FixedLength = typeof FixedLengthStream === "function" ? FixedLengthStream : null;
   if (!body || !FixedLength || !Number.isSafeInteger(length) || length < 0) {
@@ -691,7 +692,9 @@ async function handleFmp4Range(request, target, ctx) {
 
   const responseLength = end - requested.start + 1;
   const body = fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end, total);
-  return new Response(withFixedLengthStream(body, responseLength), {
+  // Open-ended responses remain backpressure-driven; finite ranges advertise an exact length.
+  const responseBody = requested.end === null ? body : withFixedLengthStream(body, responseLength);
+  return new Response(responseBody, {
     status: 206,
     headers: responseHeaders
   });
