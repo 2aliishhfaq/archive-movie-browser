@@ -121,7 +121,7 @@ function MovieBrowser() {
       event.preventDefault();
       deferred = event;
       setInstallPrompt(event);
-      checkInstallState();
+      checkInstallState(true);
     };
     const onInstalled = () => {
       deferred = null;
