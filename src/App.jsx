@@ -126,6 +126,8 @@ function MovieBrowser() {
 
 function AdminPanel() {
   const [token, setToken] = useState('');
+  const [authorized, setAuthorized] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('Feature Films');
   const [limit, setLimit] = useState(5);
@@ -138,14 +140,29 @@ function AdminPanel() {
   const [adminMovies, setAdminMovies] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
-  const [authorized, setAuthorized] = useState(false);
-  const [authBusy, setAuthBusy] = useState(false);
+
+  async function loadAdminMovies(authToken = token) {
+    if (!authToken.trim()) return;
+    setAdminLoading(true);
+    try {
+      const response = await fetch('/api/movies?admin=1&limit=500&offset=0', { headers: { Authorization: 'Bearer ' + authToken.trim() } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load movie library.');
+      setAdminMovies(data.movies || []);
+    } catch (err) { setError(err.message || 'Could not load movie library.'); }
+    finally { setAdminLoading(false); }
+  }
 
   useEffect(() => {
     const saved = window.sessionStorage.getItem('archive-admin-token');
     if (!saved) return;
     fetch('/api/movies?admin=1&limit=1', { headers: { Authorization: 'Bearer ' + saved } })
-      .then(response => { if (response.ok) { setToken(saved); setAuthorized(true); } else window.sessionStorage.removeItem('archive-admin-token'); })
+      .then(response => {
+        if (!response.ok) throw new Error('Admin session expired.');
+        setToken(saved);
+        setAuthorized(true);
+        loadAdminMovies(saved);
+      })
       .catch(() => window.sessionStorage.removeItem('archive-admin-token'));
   }, []);
 
@@ -154,94 +171,142 @@ function AdminPanel() {
     setError('');
     setAuthBusy(true);
     try {
-      const response = await fetch('/api/movies?admin=1&limit=1', { headers: { Authorization: 'Bearer ' + token.trim() } });
+      const authToken = token.trim();
+      const response = await fetch('/api/movies?admin=1&limit=1', { headers: { Authorization: 'Bearer ' + authToken } });
       if (!response.ok) throw new Error('Incorrect password. Access denied.');
-      window.sessionStorage.setItem('archive-admin-token', token.trim());
+      window.sessionStorage.setItem('archive-admin-token', authToken);
       setAuthorized(true);
-      await loadAdminMovies();
+      await loadAdminMovies(authToken);
     } catch (err) { setError(err.message || 'Could not verify password.'); }
     finally { setAuthBusy(false); }
   }
 
-  if (!authorized) return <main className="admin-shell">
+  async function deleteMovie(id) {
+    if (!window.confirm('Delete this movie from the public catalogue?')) return;
+    try {
+      const response = await fetch('/api/movies', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() }, body: JSON.stringify({ id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Delete failed.');
+      setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
+      setManualMessage('Movie deleted from the catalogue.');
+    } catch (err) { setError(err.message || 'Delete failed.'); }
+  }
+
+  function editMovie(movie) {
+    setEditingId(movie.id);
+    setManualMovie({ movie_name: movie.movie_name || '', category: movie.category || '', poster: movie.poster || '', movie_link: movie.movie_link || '' });
+    document.getElementById('movie-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function publishMovie(event) {
+    event.preventDefault();
+    setManualMessage('');
+    setManualBusy(true);
+    try {
+      const response = await fetch('/api/movies', {
+        method: editingId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
+        body: JSON.stringify(editingId ? { ...manualMovie, id: editingId } : manualMovie),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save movie.');
+      setManualMessage(editingId ? 'Movie updated successfully.' : 'Movie published to the public catalogue.');
+      setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+      setEditingId(null);
+      await loadAdminMovies();
+    } catch (err) { setManualMessage(err.message || 'Save failed.'); }
+    finally { setManualBusy(false); }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setResult(null);
+    setBusy(true);
+    try {
+      const response = await fetch('/api/movies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
+        body: JSON.stringify({ action: 'import', query, category, limit }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Import request failed.');
+      setResult(data);
+      await loadAdminMovies();
+    } catch (err) { setError(err.message || 'Import failed. Please try again.'); }
+    finally { setBusy(false); }
+  }
+
+  function clearToken() {
+    window.sessionStorage.removeItem('archive-admin-token');
+    setToken('');
+    setAuthorized(false);
+    setAdminMovies([]);
+    setResult(null);
+    setError('');
+    setManualMessage('');
+  }
+
+  return <main className="admin-shell">
     <header className="topbar">
       <a className="brand" href="/" aria-label="Back to Archive Movies"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / ADMIN</span></span></a>
       <a className="admin-back" href="/">← BACK TO CATALOG</a>
     </header>
-    <section className="admin-content admin-login-only">
+    {!authorized ? <section className="admin-content admin-login-only">
       <p className="eyebrow">RESTRICTED AREA</p>
       <h1>Admin<br/><em>access only.</em></h1>
       <p className="admin-copy">Enter the administrator password to unlock the movie management dashboard.</p>
-      <section className="dashboard-section" id="movie-editor">
-        <div className="dashboard-section-heading">
-          <p className="eyebrow">YOUR MOVIE LIBRARY</p>
-          <h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2>
-          <p>Enter a public HTTPS video URL. When you publish, the movie appears in the user catalog.</p>
-        </div>
-        <form className="admin-form" onSubmit={publishMovie}>
-          <label>MOVIE TITLE
-            <input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required />
+      <section className="dashboard-section admin-access">
+        <form className="admin-form" onSubmit={unlockDashboard}>
+          <label>ADMIN PASSWORD
+            <input type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} placeholder="Enter dashboard password" required />
           </label>
-          <div className="admin-fields">
-            <label>CATEGORY
-              <input value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Drama" maxLength={100} />
-            </label>
-            <label>POSTER IMAGE URL
-              <input value={manualMovie.poster} onChange={e => setManualMovie({...manualMovie, poster:e.target.value})} placeholder="https://..." type="url" />
-            </label>
-          </div>
-          <label>VIDEO URL (PUBLIC HTTPS MP4 / WEBM)
-            <input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://your-host.com/movie.mp4" type="url" required />
-          </label>
-          <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'SAVING…' : editingId ? 'SAVE MOVIE CHANGES ↗' : 'PUBLISH TO USER CATALOG ↗'}</button>
-          {editingId && <button className="admin-clear" type="button" onClick={() => { setEditingId(null); setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' }); }}>CANCEL EDIT</button>}
+          <button className="admin-submit" type="submit" disabled={authBusy}>{authBusy ? 'VERIFYING…' : 'UNLOCK DASHBOARD'}</button>
         </form>
-        {manualMessage && <div className="admin-message" role="status">{manualMessage}</div>}
-        <p className="admin-security">The video must already be hosted at a public HTTPS address. A file on your PC cannot stream until it is uploaded to a video host or storage such as Cloudflare R2.</p>
+        {error && <div className="admin-message admin-error" role="alert">{error}</div>}
       </section>
-      <section className="dashboard-section">
-        <div className="dashboard-section-heading">
-          <p className="eyebrow">MANAGE PUBLISHED MOVIES</p>
-          <h2>Movie library</h2>
-          <p>Edit or remove movies already visible to visitors.</p>
-        </div>
-        <button className="admin-submit" type="button" onClick={loadAdminMovies} disabled={adminLoading}>{adminLoading ? 'LOADING…' : 'REFRESH MOVIE LIBRARY'}</button>
-        <div className="admin-imported">{adminMovies.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category || 'Uncategorized'} · <button type="button" className="admin-inline" onClick={() => editMovie(movie)}>EDIT</button> · <button type="button" className="admin-inline danger" onClick={() => deleteMovie(movie.id)}>DELETE</button></span></div>)}</div>
-        <p className="admin-security">{adminMovies.length} movie records loaded.</p>
+    </section> : <>
+      <section className="admin-content">
+        <p className="eyebrow">COLLECTION MANAGEMENT</p>
+        <h1>Bring films<br/><em>into the archive.</em></h1>
+        <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
+        <section className="dashboard-section" id="movie-editor">
+          <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Paste an Internet Archive video URL. Published movies appear in the public catalog.</p></div>
+          <form className="admin-form" onSubmit={publishMovie}>
+            <label>MOVIE TITLE<input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required /></label>
+            <div className="admin-fields">
+              <label>CATEGORY<input value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Drama" maxLength={100} /></label>
+              <label>POSTER IMAGE URL<input value={manualMovie.poster} onChange={e => setManualMovie({...manualMovie, poster:e.target.value})} placeholder="https://..." type="url" /></label>
+            </div>
+            <label>INTERNET ARCHIVE VIDEO URL<input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://archive.org/download/..." type="url" required /></label>
+            <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'SAVING…' : editingId ? 'SAVE MOVIE CHANGES ↗' : 'PUBLISH TO USER CATALOG ↗'}</button>
+            {editingId && <button className="admin-clear" type="button" onClick={() => { setEditingId(null); setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' }); }}>CANCEL EDIT</button>}
+          </form>
+          {manualMessage && <div className="admin-message" role="status">{manualMessage}</div>}
+        </section>
+        <section className="dashboard-section">
+          <div className="dashboard-section-heading"><p className="eyebrow">MANAGE PUBLISHED MOVIES</p><h2>Movie library</h2><p>Edit or remove movies already visible to visitors.</p></div>
+          <button className="admin-submit" type="button" onClick={() => loadAdminMovies()} disabled={adminLoading}>{adminLoading ? 'LOADING…' : 'REFRESH MOVIE LIBRARY'}</button>
+          <div className="admin-imported">{adminMovies.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category || 'Uncategorized'} · <button type="button" className="admin-inline" onClick={() => editMovie(movie)}>EDIT</button> · <button type="button" className="admin-inline danger" onClick={() => deleteMovie(movie.id)}>DELETE</button></span></div>)}</div>
+          <p className="admin-security">{adminMovies.length} movie records loaded.</p>
+        </section>
+        <section className="dashboard-section">
+          <div className="dashboard-section-heading"><p className="eyebrow">INTERNET ARCHIVE</p><h2>Import public archive films</h2><p>Search Internet Archive and add playable films to the same catalog.</p></div>
+          <form className="admin-form" onSubmit={handleSubmit}>
+            <label>SEARCH INTERNET ARCHIVE<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Leave blank to browse Feature Films" maxLength={120} /></label>
+            <div className="admin-fields">
+              <label>CATALOG CATEGORY<input value={category} onChange={e => setCategory(e.target.value)} placeholder="Feature Films" maxLength={100} /></label>
+              <label>IMPORT LIMIT<select value={limit} onChange={e => setLimit(Number(e.target.value))}><option value={3}>3 films</option><option value={5}>5 films</option></select></label>
+            </div>
+            <button className="admin-submit" type="submit" disabled={busy}>{busy ? 'IMPORTING FILMS…' : 'SEARCH & IMPORT FILMS ↗'}</button>
+          </form>
+          {error && <div className="admin-message admin-error" role="alert">{error}</div>}
+          {result && <section className="admin-result" aria-live="polite"><div className="admin-stats"><div><strong>{result.importedCount}</strong><span>IMPORTED</span></div><div><strong>{result.skippedCount}</strong><span>SKIPPED</span></div><div><strong>{result.totalFound}</strong><span>FOUND</span></div></div><p>{result.message}</p>{result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}<a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a></section>}
+        </section>
+        <p className="admin-security">Dashboard access is verified by the server. This session is stored only in the current browser tab.</p>
+        <button className="admin-clear" type="button" onClick={clearToken}>LOCK ADMIN DASHBOARD</button>
       </section>
-      <section className="dashboard-section">
-        <div className="dashboard-section-heading">
-          <p className="eyebrow">INTERNET ARCHIVE</p>
-          <h2>Import public archive films</h2>
-          <p>Search the Internet Archive and add playable films to the same catalog.</p>
-        </div>
-        <form className="admin-form" onSubmit={handleSubmit}>
-        <label>SEARCH INTERNET ARCHIVE
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Leave blank to browse the Feature Films collection" maxLength={120} />
-        </label>
-        <div className="admin-fields">
-          <label>CATALOG CATEGORY
-            <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Feature Films" maxLength={100} />
-          </label>
-          <label>IMPORT LIMIT
-            <select value={limit} onChange={e => setLimit(Number(e.target.value))}>
-              <option value={3}>3 films</option><option value={5}>5 films</option>
-            </select>
-          </label>
-        </div>
-        <button className="admin-submit" type="submit" disabled={busy}>{busy ? 'IMPORTING FILMS…' : 'SEARCH & IMPORT FILMS ↗'}</button>
-      </form>
-      {error && <div className="admin-message admin-error" role="alert">{error}</div>}
-      {result && <section className="admin-result" aria-live="polite">
-        <div className="admin-stats"><div><strong>{result.importedCount}</strong><span>IMPORTED</span></div><div><strong>{result.skippedCount}</strong><span>SKIPPED</span></div><div><strong>{result.totalFound}</strong><span>FOUND</span></div></div>
-        <p>{result.message}</p>
-        {result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}
-        <a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a>
-      </section>}
-      <p className="admin-security">Your dashboard password is stored only in this browser's local storage and is sent over HTTPS. It is never included in the public movie catalog.</p>
-      <button className="admin-clear" type="button" onClick={clearToken}>CLEAR ADMIN SESSION</button>
-      </section>
-    </section>
+    </>}
     <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
   </main>;
 }
