@@ -115,10 +115,10 @@ function AdminPanel() {
     setBusy(true);
     window.sessionStorage.setItem('archive-admin-token', token.trim());
     try {
-      const response = await fetch('/api/import', {
+      const response = await fetch('/api/movies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
-        body: JSON.stringify({ query, category, limit }),
+        body: JSON.stringify({ action: 'import', query, category, limit }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Import request failed.');
