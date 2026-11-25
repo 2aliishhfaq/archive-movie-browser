@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless';
+import { Redis } from '@upstash/redis';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); res.status(405).end(); return; }
@@ -11,14 +12,11 @@ export default async function handler(req, res) {
     }
   } catch (error) { console.error('health-database', error.message); }
   try {
-    if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-      const response = await fetch(process.env.KV_REST_API_URL.replace(/\/+$/, ''), {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + process.env.KV_REST_API_TOKEN, 'Content-Type': 'application/json' },
-        body: JSON.stringify(['PING']),
-        signal: AbortSignal.timeout(2500),
-      });
-      checks.redis = response.ok && (await response.json()).result === 'PONG';
+    const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (url && token) {
+      const redis = new Redis({ url, token });
+      checks.redis = (await redis.ping()) === 'PONG';
     }
   } catch (error) { console.error('health-redis', error.message); }
   const ok = checks.database && checks.redis;
