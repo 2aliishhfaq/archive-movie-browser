@@ -16,13 +16,13 @@ function withHeaders(response, extra = {}) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function catalogCacheKeys(requestUrl) {
+export function catalogCacheKeys(requestUrl, version) {
   const request = new URL(requestUrl);
   const fresh = new URL(request.origin);
-  fresh.pathname = "/__edge_cache/v2/catalog/fresh";
+  fresh.pathname = "/__edge_cache/v3/catalog/" + encodeURIComponent(version) + "/fresh";
   fresh.search = request.search;
   const stale = new URL(request.origin);
-  stale.pathname = "/__edge_cache/v2/catalog/stale";
+  stale.pathname = "/__edge_cache/v3/catalog/" + encodeURIComponent(version) + "/stale";
   stale.search = request.search;
   return [new Request(fresh.toString()), new Request(stale.toString())];
 }
@@ -144,21 +144,45 @@ async function cacheCatalogResponse(cache, freshKey, staleKey, body, source, ctx
   return withHeaders(fresh, { "X-Cache": source === "archive.org" ? "ARCHIVE-FALLBACK" : "EDGE-MISS" });
 }
 
+export async function readCatalogCacheVersion() {
+  const versionUrl = new URL(CATALOG_ORIGIN);
+  versionUrl.searchParams.set('cacheVersion', '1');
+  try {
+    const response = await fetch(versionUrl.toString(), {
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      signal: AbortSignal.timeout(3000)
+    });
+    if (!response.ok) return null;
+    const state = await response.json();
+    return state?.cacheable === true && /^[0-9]{1,24}$/.test(String(state.version))
+      ? String(state.version)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleCatalog(request, ctx) {
   if (request.method !== "GET") {
     return Response.json({ error: "Method not allowed" }, { status: 405, headers: { ...jsonHeaders, Allow: "GET, OPTIONS" } });
   }
   const url = new URL(request.url);
-  const [freshKey, staleKey] = catalogCacheKeys(url);
+  const version = await readCatalogCacheVersion();
+  const cacheEnabled = Boolean(version);
+  const [freshKey, staleKey] = cacheEnabled ? catalogCacheKeys(url, version) : [null, null];
   const cache = caches.default;
 
-  try {
-    const fresh = await cache.match(freshKey);
-    if (fresh) return withHeaders(fresh, { "X-Cache": "EDGE-HIT" });
-  } catch { /* Cache API failures fall through to origin/fallback. */ }
+  if (cacheEnabled) {
+    try {
+      const fresh = await cache.match(freshKey);
+      if (fresh) return withHeaders(fresh, { 'X-Cache': 'EDGE-HIT', 'X-Movies-Cache-Version': version });
+    } catch { /* Cache API failures fall through to origin/fallback. */ }
+  }
 
   let stale = null;
-  try { stale = await cache.match(staleKey); } catch { /* The Archive.org fallback still works without cache. */ }
+  if (cacheEnabled) {
+    try { stale = await cache.match(staleKey); } catch { /* The Archive.org fallback still works without cache. */ }
+  }
 
   const originUrl = new URL(CATALOG_ORIGIN);
   originUrl.search = url.search;
@@ -173,10 +197,13 @@ async function handleCatalog(request, ctx) {
       try { parsed = JSON.parse(body); } catch { parsed = null; }
       if (parsed && typeof parsed === "object") {
         const source = "database";
-        const response = await cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(parsed), source, ctx);
+        const response = cacheEnabled
+          ? await cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(parsed), source, ctx)
+          : withHeaders(new Response(JSON.stringify(parsed), { status: 200, headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }), { "X-Cache": "BYPASS-NO-VERSION" });
         const headers = new Headers(response.headers);
         const originCache = origin.headers.get("X-Cache");
         if (originCache) headers.set("X-Origin-Cache", originCache);
+        if (version) headers.set("X-Movies-Cache-Version", version);
         return new Response(response.body, { status: response.status, headers });
       }
     }
@@ -186,7 +213,9 @@ async function handleCatalog(request, ctx) {
 
   try {
     const archiveData = await archiveCatalogFallback(url);
-    return cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(archiveData), "archive.org", ctx);
+    return cacheEnabled
+      ? cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(archiveData), "archive.org", ctx)
+      : new Response(JSON.stringify(archiveData), { status: 200, headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Cache": "BYPASS-NO-VERSION" } });
   } catch {
     return Response.json(
       { error: "Catalogue temporarily unavailable", movies: [], total: 0, source: "unavailable" },
