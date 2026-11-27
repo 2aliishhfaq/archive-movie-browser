@@ -61,10 +61,11 @@ function announceMovieChange() {
 }
 
 async function fetchCategoryOptions(signal) {
+  // The Worker checks the authoritative mutation version, then serves the matching
+  // long-lived edge entry. This avoids a Vercel/Redis round trip on routine page loads.
   try {
-    const response = await fetch('/api/movies?categories=1', {
+    const response = await fetch(CATALOG_EDGE_URL + '/catalog?categories=1', {
       headers: { Accept: 'application/json' },
-      cache: 'no-store',
       signal,
     });
     if (response.ok) {
@@ -75,9 +76,11 @@ async function fetchCategoryOptions(signal) {
     if (signal?.aborted) throw error;
   }
 
+  // Direct API is a resilience fallback only; its own Redis cache remains versioned.
   try {
-    const response = await fetch(CATALOG_EDGE_URL + '/catalog?categories=1', {
+    const response = await fetch('/api/movies?categories=1', {
       headers: { Accept: 'application/json' },
+      cache: 'no-store',
       signal,
     });
     if (response.ok) {
@@ -333,26 +336,7 @@ async function fetchArchiveCatalog(searchParams) {
 async function fetchCatalogData(searchParams) {
   const query = searchParams.toString();
 
-  // Category views are small, dynamic facets. Read them from the database-backed
-  // API first so a category edit is not hidden behind a stale Worker edge entry.
-  if (searchParams.has('category')) {
-    try {
-      const response = await fetch('/api/movies' + (query ? '?' + query : ''), {
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(7000),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          data: data.movies
-            ? { ...data, movies: data.movies.map(movie => ({ ...movie, direct_archive: true })) }
-            : data,
-          cache: 'VERCEL-DIRECT',
-        };
-      }
-    } catch { /* Fall through to the edge catalogue if the database API is unavailable. */ }
-  }
+  // All catalogue views, including category filters, use the same version-aware edge cache.
 
   try {
     const response = await fetch(CATALOG_EDGE_URL + '/catalog' + (query ? '?' + query : ''), {
@@ -423,9 +407,6 @@ function MovieBrowser() {
       refreshCategories();
       setCatalogRefresh(value => value + 1);
     };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshAll();
-    };
     const onStorage = event => {
       if (event.key === MOVIE_CHANGE_KEY) refreshAll();
     };
@@ -434,16 +415,12 @@ function MovieBrowser() {
       if (event.data?.type === 'changed') refreshAll();
     };
     refreshCategories();
-    window.addEventListener('focus', refreshAll);
     window.addEventListener('storage', onStorage);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       active = false;
       controller?.abort();
       channel?.close();
-      window.removeEventListener('focus', refreshAll);
       window.removeEventListener('storage', onStorage);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
 
