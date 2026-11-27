@@ -188,9 +188,10 @@ export default function FilmPlayer({ movie, files }) {
           onTimeUpdate={() => { countWatching(); savePosition(); }}
           onPause={() => minutes.current.flush()}
           onFallback={at => {
+            const wasPlaying = videoRef.current ? !videoRef.current.paused : true;
             pendingStart.current = at;
             setSwapAt(at);
-            setSwapWasPlaying(true);
+            setSwapWasPlaying(wasPlaying);
             setAudioMode(false);
           }}
         />
