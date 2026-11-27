@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 
 // Versioned catalogue entries stay warm for a year; successful mutations rotate the version.
 const CACHE_TTL = 31_536_000;
+const SEARCH_CACHE_TTL = 86_400;
 const CACHE_VERSION_KEY = 'movies:cache-version';
 const json = (res, status, body, headers = {}) => {
   res.statusCode = status;
@@ -54,7 +55,7 @@ async function redisPipeline(commands) {
   if (failed) throw new Error('Redis command failed: ' + failed.error);
   return entries.map(entry => entry.result);
 }
-async function cached(key, load) {
+async function cached(key, load, ttl = CACHE_TTL) {
   if (!redisReady()) return { value: await load(), hit: false, configured: false };
   try {
     let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
@@ -67,7 +68,7 @@ async function cached(key, load) {
     const [stored] = await redisPipeline([['GET', cacheKey]]);
     if (stored) return { value: JSON.parse(stored), hit: true, configured: true };
     const value = await load();
-    await redisPipeline([['SET', cacheKey, JSON.stringify(value), 'EX', String(CACHE_TTL)]]);
+    await redisPipeline([['SET', cacheKey, JSON.stringify(value), 'EX', String(ttl)]]);
     return { value, hit: false, configured: true };
   } catch (error) {
     console.error('redis-cache-bypass', error.message);
@@ -269,7 +270,7 @@ export default async function handler(req, res) {
         const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g'))) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g')))`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
-      });
+      }, q ? SEARCH_CACHE_TTL : CACHE_TTL);
       return json(res, 200, result.value, {
         'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED',
         // Redis is the canonical catalogue cache; don't let Vercel's CDN
