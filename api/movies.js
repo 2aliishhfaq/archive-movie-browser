@@ -292,10 +292,20 @@ export default async function handler(req, res) {
     if (method === 'PUT') {
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
-      const rows = await sql`UPDATE public.movies SET movie_name = ${movie.movie_name}, category = ${movie.category}, poster = ${movie.poster}, movie_link = ${movie.movie_link} WHERE id = ${String(body.id)} RETURNING id, movie_name, category, poster, movie_link`;
-      if (!rows.length) return json(res, 404, { error: 'Movie not found' });
+      const rows = await sql`UPDATE public.movies SET movie_name = ${movie.movie_name}, category = ${movie.category}, poster = ${movie.poster}, movie_link = ${movie.movie_link}
+        WHERE id = ${String(body.id)}
+          AND (movie_name IS DISTINCT FROM ${movie.movie_name}
+            OR category IS DISTINCT FROM ${movie.category}
+            OR poster IS DISTINCT FROM ${movie.poster}
+            OR movie_link IS DISTINCT FROM ${movie.movie_link})
+        RETURNING id, movie_name, category, poster, movie_link`;
+      if (!rows.length) {
+        const existing = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE id = ${String(body.id)} LIMIT 1`;
+        if (!existing.length) return json(res, 404, { error: 'Movie not found' });
+        return json(res, 200, { movie: existing[0], unchanged: true });
+      }
       await invalidateCache();
-      return json(res, 200, { movie: rows[0] });
+      return json(res, 200, { movie: rows[0], unchanged: false });
     }
     const rows = await sql`DELETE FROM public.movies WHERE id = ${String(body.id)} RETURNING id`;
     if (!rows.length) return json(res, 404, { error: 'Movie not found' });
