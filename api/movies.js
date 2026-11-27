@@ -269,12 +269,11 @@ export default async function handler(req, res) {
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g')))`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
       });
-      const dynamicCategoryView = req.query?.categories === '1' || Boolean(category);
       return json(res, 200, result.value, {
         'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED',
-        'Cache-Control': adminView || dynamicCategoryView
-          ? 'no-store'
-          : 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600, stale-if-error=86400',
+        // Redis is the canonical catalogue cache; don't let Vercel's CDN
+        // retain an older response after the Redis cache version is advanced.
+        'Cache-Control': 'no-store, max-age=0',
       });
     }
     if (method === 'POST') {
