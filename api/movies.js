@@ -1,7 +1,8 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
 
-const CACHE_TTL = 3600;
+// Versioned catalogue entries stay warm for a year; successful mutations rotate the version.
+const CACHE_TTL = 31_536_000;
 const CACHE_VERSION_KEY = 'movies:cache-version';
 const json = (res, status, body, headers = {}) => {
   res.statusCode = status;
