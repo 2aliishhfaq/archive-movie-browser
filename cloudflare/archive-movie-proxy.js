@@ -9,8 +9,9 @@ const jsonHeaders = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Opti
 const CATALOG_ORIGIN = "https://reelboxe.vercel.app/api/movies";
 // Catalogue cache keys include the Redis mutation version. Keep each immutable version warm
 // for one year; a movie write advances the version and makes the previous namespace unreachable.
-const FRESH_TTL = 31_536_000;
-const STALE_TTL = 31_536_000;
+const CATALOG_TTL = 31_536_000;
+const SEARCH_CATALOG_TTL = 86_400;
+const FALLBACK_TTL = 300;
 
 function withHeaders(response, extra = {}) {
   const headers = new Headers(response.headers);
@@ -21,12 +22,20 @@ function withHeaders(response, extra = {}) {
 export function catalogCacheKeys(requestUrl, version) {
   const request = new URL(requestUrl);
   const fresh = new URL(request.origin);
-  fresh.pathname = "/__edge_cache/v3/catalog/" + encodeURIComponent(version) + "/fresh";
+  fresh.pathname = "/__edge_cache/v4/catalog/" + encodeURIComponent(version) + "/fresh";
   fresh.search = request.search;
   const stale = new URL(request.origin);
-  stale.pathname = "/__edge_cache/v3/catalog/" + encodeURIComponent(version) + "/stale";
+  stale.pathname = "/__edge_cache/v4/catalog/" + encodeURIComponent(version) + "/stale";
   stale.search = request.search;
   return [new Request(fresh.toString()), new Request(stale.toString())];
+}
+
+export function catalogFallbackCacheKey(requestUrl, version) {
+  const request = new URL(requestUrl);
+  const fallback = new URL(request.origin);
+  fallback.pathname = "/__edge_cache/v4/catalog/" + encodeURIComponent(version) + "/fallback";
+  fallback.search = request.search;
+  return new Request(fallback.toString());
 }
 
 function archiveVideoFile(files = []) {
@@ -124,26 +133,22 @@ async function archiveCatalogFallback(url) {
   };
 }
 
-async function cacheCatalogResponse(cache, freshKey, staleKey, body, source, ctx) {
+async function cacheCatalogResponse(cache, freshKey, staleKey, body, source, ttl, ctx) {
   const baseHeaders = new Headers({
     ...cors,
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     "X-Data-Source": source
   });
-  const fresh = new Response(body, {
+  const cachedResponse = new Response(body, {
     status: 200,
-    headers: new Headers([...baseHeaders, ["Cache-Control", "public, max-age=" + FRESH_TTL]])
-  });
-  const stale = new Response(body, {
-    status: 200,
-    headers: new Headers([...baseHeaders, ["Cache-Control", "public, max-age=" + STALE_TTL]])
+    headers: new Headers([...baseHeaders, ["Cache-Control", "public, max-age=" + ttl]])
   });
   ctx.waitUntil(Promise.all([
-    cache.put(freshKey, fresh.clone()),
-    cache.put(staleKey, stale.clone())
+    cache.put(freshKey, cachedResponse.clone()),
+    cache.put(staleKey, cachedResponse.clone())
   ]).catch(() => {}));
-  return withHeaders(fresh, { "X-Cache": source === "archive.org" ? "ARCHIVE-FALLBACK" : "EDGE-MISS", "Cache-Control": "no-store" });
+  return withHeaders(cachedResponse, { "X-Cache": "EDGE-MISS", "Cache-Control": "no-store" });
 }
 
 export async function readCatalogCacheVersion() {
@@ -172,6 +177,8 @@ async function handleCatalog(request, ctx) {
   const version = await readCatalogCacheVersion();
   const cacheEnabled = Boolean(version);
   const [freshKey, staleKey] = cacheEnabled ? catalogCacheKeys(url, version) : [null, null];
+  const fallbackKey = cacheEnabled ? catalogFallbackCacheKey(url, version) : null;
+  const cacheTtl = url.searchParams.get("q")?.trim() ? SEARCH_CATALOG_TTL : CATALOG_TTL;
   const cache = caches.default;
 
   if (cacheEnabled) {
@@ -200,7 +207,7 @@ async function handleCatalog(request, ctx) {
       if (parsed && typeof parsed === "object") {
         const source = "database";
         const response = cacheEnabled
-          ? await cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(parsed), source, ctx)
+          ? await cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(parsed), source, cacheTtl, ctx)
           : withHeaders(new Response(JSON.stringify(parsed), { status: 200, headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }), { "X-Cache": "BYPASS-NO-VERSION" });
         const headers = new Headers(response.headers);
         const originCache = origin.headers.get("X-Cache");
@@ -213,11 +220,44 @@ async function handleCatalog(request, ctx) {
 
   if (stale) return withHeaders(stale, { "X-Cache": "EDGE-STALE", "Warning": '110 - "Response is stale"', "Cache-Control": "no-store" });
 
+  // Archive.org is an outage fallback, never the canonical catalogue. Keep it in a
+  // separate short-lived key so a temporary database outage cannot poison the year-long cache.
+  if (cacheEnabled) {
+    try {
+      const fallback = await cache.match(fallbackKey);
+      if (fallback) return withHeaders(fallback, {
+        "X-Cache": "ARCHIVE-FALLBACK-HIT",
+        "X-Movies-Cache-Version": version,
+        "Cache-Control": "no-store"
+      });
+    } catch { /* Continue to the live Archive.org fallback. */ }
+  }
+
   try {
     const archiveData = await archiveCatalogFallback(url);
-    return cacheEnabled
-      ? cacheCatalogResponse(cache, freshKey, staleKey, JSON.stringify(archiveData), "archive.org", ctx)
-      : new Response(JSON.stringify(archiveData), { status: 200, headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Cache": "BYPASS-NO-VERSION" } });
+    const body = JSON.stringify(archiveData);
+    if (cacheEnabled) {
+      const fallbackResponse = new Response(body, {
+        status: 200,
+        headers: {
+          ...cors,
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+          "X-Data-Source": "archive.org",
+          "Cache-Control": "public, max-age=" + FALLBACK_TTL
+        }
+      });
+      ctx.waitUntil(cache.put(fallbackKey, fallbackResponse.clone()).catch(() => {}));
+      return withHeaders(fallbackResponse, {
+        "X-Cache": "ARCHIVE-FALLBACK",
+        "X-Movies-Cache-Version": version,
+        "Cache-Control": "no-store"
+      });
+    }
+    return new Response(body, {
+      status: 200,
+      headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Cache": "BYPASS-NO-VERSION" }
+    });
   } catch {
     return Response.json(
       { error: "Catalogue temporarily unavailable", movies: [], total: 0, source: "unavailable" },
