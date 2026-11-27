@@ -53,6 +53,8 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
       setLoading(false);
       if (autoPlay) player.play?.().catch?.(() => {});
       updateTracks();
+      if (!trackCheckTimer) {
+      }
     };
     const onTick = () => {
       if (!player || cancelled) return;
