@@ -49,6 +49,7 @@ export default function FilmPlayer({ movie, files }) {
     let cancelled = false;
     setSource(undefined);
     setAudioMode(false);
+    setSwapWasPlaying(true);
     archiveService.getMetadata(movie.identifier)
       .then(data => {
         if (cancelled) return;
