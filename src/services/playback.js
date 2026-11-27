@@ -76,7 +76,7 @@ export function subtitleTracks(files, videoName = '') {
 }
 const stemOf = name => String(name || '').replace(/\.ia\.mp4$/i, '').replace(/\.[^.]+$/, '');
 
-// The first choice, or null to fall back to the embedded player
+// The first choice, or null when no browser-compatible video file exists
 export function pickPlayableFile(files, maxBytes) {
   return playableFiles(files, maxBytes)[0] || null;
 }
