@@ -15,6 +15,7 @@ const formatTime = (value = 0) => {
 export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPlayer, onTimeUpdate, onPause, onFallback }) {
   const elementRef = useRef(null);
   const [tracks, setTracks] = useState([]);
+  const tracksRef = useRef([]);
   const [selected, setSelected] = useState('');
   const [time, setTime] = useState(startAt);
   const [duration, setDuration] = useState(0);
@@ -34,6 +35,7 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
       const normalized = available
         .filter(track => track && track.lang)
         .map(track => ({ lang: String(track.lang), label: track.label || track.lang, active: !!track.active }));
+      tracksRef.current = normalized;
       setTracks(normalized);
       const active = normalized.find(track => track.active) || normalized[0];
       if (active) setSelected(active.lang);
@@ -87,7 +89,7 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
         player.addEventListener('errordisplay', onError);
         player.addEventListener('canplay', restorePlayback);
         trackCheckTimer = setTimeout(() => {
-          if (!cancelled && tracks.length < 2) callbacks.current.onFallback?.(Number(player.currentTime) || startAt);
+          if (!cancelled && tracksRef.current.length < 2) callbacks.current.onFallback?.(Number(player.currentTime) || startAt);
         }, 4500);
       } catch {
         callbacks.current.onFallback?.(startAt);
