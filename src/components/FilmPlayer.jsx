@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Languages, Loader2 } from 'lucide-react';
+import MoviAudioSwap from './MoviAudioSwap';
+import { getArchiveStreamUrl } from '../services/archiveStream';
 import archiveService from '../services/archive';
 import { playableFiles, videoUrl, shortcutFor, resumeTime, rememberPosition, readPositions, POSITIONS_KEY, previewFrames, frameAt } from '../services/playback';
 import { track, screenType } from '../services/analytics';
@@ -22,6 +24,10 @@ export default function FilmPlayer({ movie, files }) {
   const [resumedAt, setResumedAt] = useState(0);
   const [frames, setFrames] = useState([]);
   const [hover, setHover] = useState(null); // { x (0..1), seconds } while the pointer is on the scrub strip
+  const [audioMode, setAudioMode] = useState(false);
+  const [swapAt, setSwapAt] = useState(0);
+  const [swapWasPlaying, setSwapWasPlaying] = useState(true);
+  const pendingStart = useRef(0);
   const videoRef = useRef(null);
   const queue = useRef([]); // files still to try, best first, after the one playing
   const lastSaved = useRef(0);
@@ -42,6 +48,7 @@ export default function FilmPlayer({ movie, files }) {
   useEffect(() => {
     let cancelled = false;
     setSource(undefined);
+    setAudioMode(false);
     archiveService.getMetadata(movie.identifier)
       .then(data => {
         if (cancelled) return;
@@ -57,11 +64,24 @@ export default function FilmPlayer({ movie, files }) {
 
   // The file would not play, or played sound over a black picture (a codec the browser has
   // no decoder for): the next file, or Archive.org's player when there is none left
-  const nextFile = () => { track('Copy failed', { film: movie.identifier }); setSource(queue.current.shift() || null); };
+  const nextFile = () => { setAudioMode(false); track('Copy failed', { film: movie.identifier }); setSource(queue.current.shift() || null); };
 
   const loaded = () => {
     if (videoRef.current.videoWidth === 0) return nextFile();
-    resume();
+    if (pendingStart.current > 0) {
+      videoRef.current.currentTime = pendingStart.current;
+      pendingStart.current = 0;
+    } else resume();
+  };
+
+  // Keep native HTML5 as the fast default. Only opt into Movi's WASM demuxer when
+  // the viewer requests embedded multi-audio switching (Chrome/Edge lack audioTracks).
+  const enableAudioSwap = () => {
+    const video = videoRef.current;
+    const at = Number(video?.currentTime) || 0;
+    setSwapAt(at);
+    setSwapWasPlaying(video ? !video.paused : true);
+    setAudioMode(true);
   };
 
   // Shortcuts. Capture phase, so a focused <video> does not also handle the arrow keys itself.
@@ -159,21 +179,49 @@ export default function FilmPlayer({ movie, files }) {
 
   return (
     <>
-      <video
-        ref={videoRef}
-        src={source}
-        controls
-        autoPlay
-        playsInline
-        className="absolute inset-0 w-full h-full bg-black"
-        aria-label={movie.title}
-        onLoadedMetadata={loaded}
-        onTimeUpdate={() => { countWatching(); savePosition(); }}
-        onPause={() => minutes.current.flush()}
-        onError={nextFile}
-      >
-        <SubtitleTracks identifier={movie.identifier} tracks={subtitles} />
-      </video>
+      {audioMode ? (
+        <MoviAudioSwap
+          src={getArchiveStreamUrl(source)}
+          startAt={swapAt}
+          autoPlay={swapWasPlaying}
+          onPlayer={player => { videoRef.current = player; }}
+          onTimeUpdate={() => { countWatching(); savePosition(); }}
+          onPause={() => minutes.current.flush()}
+          onFallback={at => {
+            pendingStart.current = at;
+            setSwapAt(at);
+            setSwapWasPlaying(true);
+            setAudioMode(false);
+          }}
+        />
+      ) : (
+        <>
+          <video
+            ref={videoRef}
+            src={getArchiveStreamUrl(source)}
+            controls
+            autoPlay
+            playsInline
+            className="absolute inset-0 w-full h-full bg-black"
+            aria-label={movie.title}
+            onLoadedMetadata={loaded}
+            onTimeUpdate={() => { countWatching(); savePosition(); }}
+            onPause={() => minutes.current.flush()}
+            onError={nextFile}
+          >
+            <SubtitleTracks identifier={movie.identifier} tracks={subtitles} />
+          </video>
+          <button
+            type="button"
+            onClick={enableAudioSwap}
+            className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded bg-black/75 px-3 py-2 text-xs text-white hover:bg-black"
+            aria-label="Enable audio track switching"
+            title="Switch embedded audio language"
+          >
+            <Languages size={16} /> Audio
+          </button>
+        </>
+      )}
       {subtitleNote(subtitles) && <p className="subtitle-note absolute left-3 top-3 font-mono text-[10px] tracking-[0.1em] uppercase text-bone/80 bg-ink/70 px-2 py-1 rounded-sm pointer-events-none">{subtitleNote(subtitles)}</p>}
       {frames.length > 0 && (
         <div
