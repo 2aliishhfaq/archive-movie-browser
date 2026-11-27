@@ -629,3 +629,19 @@
   .player-modal {width:min(96vw,calc((100dvh - 132px) * 16 / 9));max-height:calc(100dvh - 8px)}
   .video-frame {aspect-ratio:16 / 9}
 }
+
+
+/* Reelsbox branding and simplified playback controls. */
+.brand-name{color:#f0eee7;font-weight:700;letter-spacing:.14em}
+.player-modal-top-clean{justify-content:flex-end}
+.download-caption{
+  flex:0 1 340px;
+  max-width:340px;
+  color:#b9b7ad;
+  font:9px/1.65 'DM Mono',monospace;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+@media(max-width:650px){
+  .download-caption{flex:0 0 auto;width:100%;max-width:none;font-size:9px;line-height:1.6}
+}

@@ -479,8 +479,8 @@ function MovieBrowser() {
 
   return <main className="shell">
     <header className="topbar">
-      <a className="brand" href="/" aria-label="Archive Movie Browser home"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / MOVIES</span></span></a>
-      <nav className="top-nav"><span className="top-note">INDEPENDENT FILM ARCHIVE</span><a className="admin-tab" href="/admin">ADMIN</a></nav>
+      <a className="brand" href="/" aria-label="Reelsbox home"><span className="brand-mark">R</span><span className="brand-name">REELSBOX</span></a>
+      <nav className="top-nav"><a className="admin-tab" href="/admin">ADMIN</a></nav>
     </header>
     <section className="browse-tools" aria-label="Find movies">
       <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." aria-label="Search movies"/></label>
@@ -497,7 +497,6 @@ function MovieBrowser() {
       : !error && <div className="empty"><span>✳</span><h3>No films found</h3><p>Try another title or category.</p></div>}
       <div className="pagination"><button disabled={page===0 || loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>PAGE {page+1} OF {Math.max(1,Math.ceil(total/pageSize))}</span><button disabled={loading || (page+1)*pageSize>=total} onClick={()=>setPage(p=>p+1)}>Next →</button></div>
     </section>
-    <footer><span>ARCHIVE / MOVIES</span><div className="footer-links"><a href="https://archive.org" target="_blank" rel="noreferrer">PRESERVED BY THE INTERNET ARCHIVE ↗</a></div></footer>
     {showInstallNotice && <aside className="install-prompt" role="dialog" aria-label="Install Reelbox">
       <button className="install-dismiss" type="button" onClick={dismissInstallNotice} aria-label="Dismiss install prompt">×</button>
       <span className="install-mark">R</span>
@@ -513,8 +512,7 @@ function MovieBrowser() {
       </section>
     </div>}
     {selected && <div className="modal-backdrop" role="presentation" onClick={()=>setSelected(null)}><section className="player-modal" role="dialog" aria-modal="true" aria-label={selected.movie_name} onClick={e=>e.stopPropagation()}>
-      <div className="player-modal-top">
-        <span>NOW PLAYING · FMP4 RANGE PLAYER</span>
+      <div className="player-modal-top player-modal-top-clean">
         <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       </div>
       <div className="video-frame">
@@ -532,7 +530,7 @@ function MovieBrowser() {
               ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
               : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
       </div>
-      <div className="player-info"><div><p className="eyebrow">{selected.category || 'ARCHIVE FILM'} · {activeVideoSource ? (isHlsSource(activeVideoSource) ? 'HLS STREAM' : 'FMP4 BYTE-RANGE STREAM') : playback.status === 'resolving' ? 'CONNECTING' : 'ARCHIVE FALLBACK'}</p><h2>{selected.movie_name}</h2></div><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><h2>{selected.movie_name}</h2></div><span className="download-caption">CLICK HERE TO DOWNLOAD DUAL AUDIO MOVIE (ENGLISH + HINDI)</span><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
     </section></div>}
   </main>;
 }
@@ -663,7 +661,7 @@ function AdminPanel() {
 
   return <main className="admin-shell">
     <header className="topbar">
-      <a className="brand" href="/" aria-label="Back to Archive Movies"><span className="brand-mark">A</span><span>ARCHIVE<span className="brand-light"> / ADMIN</span></span></a>
+      <a className="brand" href="/" aria-label="Reelsbox home"><span className="brand-mark">R</span><span className="brand-name">REELSBOX</span></a>
       <a className="admin-back" href="/">← BACK TO CATALOG</a>
     </header>
     {!authorized ? <section className="admin-content admin-login-only">
@@ -721,7 +719,7 @@ function AdminPanel() {
         <button className="admin-clear" type="button" onClick={clearToken}>LOCK ADMIN DASHBOARD</button>
       </section>
     </>}
-    <footer><span>ARCHIVE / MOVIES</span><a href="/">RETURN TO CATALOG ↗</a></footer>
+    <footer><a href="/">RETURN TO CATALOG ↗</a></footer>
   </main>;
 }
 
