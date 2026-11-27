@@ -235,11 +235,14 @@ export default async function handler(req, res) {
           return { movie: rows[0] || null };
         }
         if (req.query?.categories === '1') {
-          const rows = await sql`SELECT DISTINCT category FROM public.movies WHERE category IS NOT NULL AND category <> '' ORDER BY category ASC`;
+          const rows = await sql`SELECT DISTINCT ON (LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g'))) REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g') AS category
+            FROM public.movies
+            WHERE category IS NOT NULL AND BTRIM(category) <> ''
+            ORDER BY LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) ASC, REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g') ASC`;
           return { categories: rows.map(row => row.category) };
         }
-        const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR category = ${category}) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
-        const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR category = ${category})`;
+        const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g'))) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
+        const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g')))`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
       });
       return json(res, 200, result.value, { 'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED', 'Cache-Control': adminView ? 'no-store' : 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600, stale-if-error=86400' });

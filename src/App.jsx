@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getArchiveStreamUrl, isFmp4FileName } from './services/archiveStream.js';
+import { normalizeMovieCategories } from './services/movieCategories.js';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -47,6 +48,37 @@ function getArchiveEmbedUrl(source) {
 }
 
 const CATALOG_EDGE_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev';
+
+async function fetchCategoryOptions(signal) {
+  try {
+    const response = await fetch('/api/movies?categories=1', {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal,
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return normalizeMovieCategories(data.categories);
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+  }
+
+  try {
+    const response = await fetch(CATALOG_EDGE_URL + '/catalog?categories=1', {
+      headers: { Accept: 'application/json' },
+      signal,
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return normalizeMovieCategories(data.categories);
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+  }
+
+  return [];
+}
 
 function makeArchiveDownloadUrl(identifier, filename) {
   return 'https://archive.org/download/' + encodeURIComponent(identifier) + '/' +
@@ -344,9 +376,27 @@ function MovieBrowser() {
   }, [query, category, page]);
 
   useEffect(() => {
-    fetchCatalogData(new URLSearchParams({ categories: '1' }))
-      .then(({ data }) => setCategories(data.categories || ['Archive.org']))
-      .catch(() => {});
+    let active = true;
+    let controller = null;
+    const refreshCategories = () => {
+      controller?.abort();
+      controller = new AbortController();
+      fetchCategoryOptions(controller.signal)
+        .then(next => { if (active) setCategories(next); })
+        .catch(() => {});
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshCategories();
+    };
+    refreshCategories();
+    window.addEventListener('focus', refreshCategories);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.removeEventListener('focus', refreshCategories);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -365,8 +415,6 @@ function MovieBrowser() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [params]);
-
-  useEffect(() => { setPage(0); }, [query, category]);
 
   useEffect(() => {
     let deferred = null;
@@ -437,6 +485,16 @@ function MovieBrowser() {
     localStorage.setItem('reelbox-install-dismissed-until', String(Date.now() + INSTALL_CHECK_INTERVAL));
   }
 
+  function updateSearch(nextQuery) {
+    setPage(0);
+    setQuery(nextQuery);
+  }
+
+  function updateCategory(nextCategory) {
+    setPage(0);
+    setCategory(nextCategory);
+  }
+
   const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
   const activeVideoSource = playback.sources[playback.index] || null;
 
@@ -482,9 +540,25 @@ function MovieBrowser() {
       <a className="brand" href="/" aria-label="Reelsbox home"><span className="brand-mark">R</span><span className="brand-name">REELSBOX</span></a>
       <nav className="top-nav"><a className="admin-tab" href="/admin">ADMIN</a></nav>
     </header>
+    <nav className="category-nav" aria-label="Browse movie categories">
+      <button
+        type="button"
+        className={'category-chip' + (category === '' ? ' active' : '')}
+        aria-pressed={category === ''}
+        onClick={() => updateCategory('')}
+      >All</button>
+      {categories.map(c => (
+        <button
+          type="button"
+          className={'category-chip' + (category === c ? ' active' : '')}
+          aria-pressed={category === c}
+          key={c}
+          onClick={() => updateCategory(c)}
+        >{c}</button>
+      ))}
+    </nav>
     <section className="browse-tools" aria-label="Find movies">
-      <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." aria-label="Search movies"/></label>
-      <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category"><option value="">All categories</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+      <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={e => updateSearch(e.target.value)} placeholder="Search movies..." aria-label="Search movies"/></label>
     </section>
     <section className="catalog">
       <div className="section-heading"><div><p className="eyebrow">THE COLLECTION</p><h2>{category || 'Browse films'}</h2></div><span className="count">{total.toLocaleString()} FILMS {cache ? '· CACHE ' + cache : ''}</span></div>
@@ -552,6 +626,13 @@ function AdminPanel() {
   const [adminMovies, setAdminMovies] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [availableCategories, setAvailableCategories] = useState([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchCategoryOptions(controller.signal).then(setAvailableCategories).catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   async function loadAdminMovies(authToken = token) {
     if (!authToken.trim()) return;
@@ -601,6 +682,7 @@ function AdminPanel() {
       if (!response.ok) throw new Error(data.error || 'Delete failed.');
       setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
       setManualMessage('Movie deleted from the catalogue.');
+      fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
     } catch (err) { setError(err.message || 'Delete failed.'); }
   }
 
@@ -625,7 +707,10 @@ function AdminPanel() {
       setManualMessage(editingId ? 'Movie updated successfully.' : 'Movie published to the public catalogue.');
       setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
       setEditingId(null);
-      await loadAdminMovies();
+      await Promise.all([
+        loadAdminMovies(),
+        fetchCategoryOptions().then(setAvailableCategories),
+      ]);
     } catch (err) { setManualMessage(err.message || 'Save failed.'); }
     finally { setManualBusy(false); }
   }
@@ -644,7 +729,10 @@ function AdminPanel() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Import request failed.');
       setResult(data);
-      await loadAdminMovies();
+      await Promise.all([
+        loadAdminMovies(),
+        fetchCategoryOptions().then(setAvailableCategories),
+      ]);
     } catch (err) { setError(err.message || 'Import failed. Please try again.'); }
     finally { setBusy(false); }
   }
@@ -687,7 +775,7 @@ function AdminPanel() {
           <form className="admin-form" onSubmit={publishMovie}>
             <label>MOVIE TITLE<input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required /></label>
             <div className="admin-fields">
-              <label>CATEGORY<input value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Drama" maxLength={100} /></label>
+              <label>CATEGORY<input list="reelbox-category-options" value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Romantic, Animation, Kids Cartoon" maxLength={100} /></label>
               <label>POSTER IMAGE URL<input value={manualMovie.poster} onChange={e => setManualMovie({...manualMovie, poster:e.target.value})} placeholder="https://..." type="url" /></label>
             </div>
             <label>INTERNET ARCHIVE VIDEO URL<input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://archive.org/download/..." type="url" required /></label>
@@ -707,7 +795,7 @@ function AdminPanel() {
           <form className="admin-form" onSubmit={handleSubmit}>
             <label>SEARCH INTERNET ARCHIVE<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Leave blank to browse Feature Films" maxLength={120} /></label>
             <div className="admin-fields">
-              <label>CATALOG CATEGORY<input value={category} onChange={e => setCategory(e.target.value)} placeholder="Feature Films" maxLength={100} /></label>
+              <label>CATALOG CATEGORY<input list="reelbox-category-options" value={category} onChange={e => setCategory(e.target.value)} placeholder="Feature Films" maxLength={100} /></label>
               <label>IMPORT LIMIT<select value={limit} onChange={e => setLimit(Number(e.target.value))}><option value={3}>3 films</option><option value={5}>5 films</option></select></label>
             </div>
             <button className="admin-submit" type="submit" disabled={busy}>{busy ? 'IMPORTING FILMS…' : 'SEARCH & IMPORT FILMS ↗'}</button>
@@ -715,6 +803,10 @@ function AdminPanel() {
           {error && <div className="admin-message admin-error" role="alert">{error}</div>}
           {result && <section className="admin-result" aria-live="polite"><div className="admin-stats"><div><strong>{result.importedCount}</strong><span>IMPORTED</span></div><div><strong>{result.skippedCount}</strong><span>SKIPPED</span></div><div><strong>{result.totalFound}</strong><span>FOUND</span></div></div><p>{result.message}</p>{result.imported?.length > 0 && <div className="admin-imported">{result.imported.map(movie => <div key={movie.id}><strong>{movie.movie_name}</strong><span>{movie.category}</span></div>)}</div>}<a className="admin-view" href="/">VIEW PUBLIC CATALOG ↗</a></section>}
         </section>
+        <datalist id="reelbox-category-options">
+          {availableCategories.map(item => <option key={item} value={item} />)}
+        </datalist>
+        <p className="admin-security">Choose an existing category or type a new one. New categories appear in the public category bar after saving a movie.</p>
         <p className="admin-security">Dashboard access is verified by the server. This session is stored only in the current browser tab.</p>
         <button className="admin-clear" type="button" onClick={clearToken}>LOCK ADMIN DASHBOARD</button>
       </section>
