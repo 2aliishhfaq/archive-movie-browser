@@ -25,7 +25,7 @@ test('playableFiles lists every streamable file best first, so a black-picture o
 test('pickPlayableFile skips a master too big to stream, and gives up when nothing can play in a browser', () => {
   const huge = [{ name: 'film.mp4', format: 'MPEG4', source: 'original', size: String(9e9) }, { name: 'film_512kb.mp4', format: '512Kb MPEG4', source: 'derivative', size: '300000000' }];
   assert.equal(pickPlayableFile(huge).name, 'film_512kb.mp4');
-  assert.equal(pickPlayableFile([{ name: 'film.avi', format: 'Cinepack', source: 'original', size: '1' }, { name: 'film.ogv', format: 'Ogg Video', source: 'derivative', size: '1' }]), null, 'Safari cannot play Ogg: use the Archive.org player');
+  assert.equal(pickPlayableFile([{ name: 'film.avi', format: 'Cinepack', source: 'original', size: '1' }, { name: 'film.ogv', format: 'Ogg Video', source: 'derivative', size: '1' }]), null, 'no browser-compatible MP4 exists; keep the app on its HTML5-only error state');
   assert.equal(pickPlayableFile(undefined), null);
 });
 
