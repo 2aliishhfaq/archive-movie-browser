@@ -28,6 +28,7 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
     let cancelled = false;
     let player;
     let restored = false;
+    let failed = false;
     let trackCheckTimer;
     const updateTracks = () => {
       if (!player || cancelled || typeof player.getAudioLangs !== 'function') return;
@@ -63,7 +64,8 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
       callbacks.current.onTimeUpdate?.();
     };
     const onError = () => {
-      if (!cancelled) {
+      if (!cancelled && !failed) {
+        failed = true;
         setLoading(false);
         setMessage('Audio player could not open this file. Returning to native playback…');
         callbacks.current.onFallback?.(Number(player?.currentTime) || startAt);
@@ -80,7 +82,6 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
         player.setAttribute('wasmurl', MOVI_WASM);
         player.setAttribute('preload', 'metadata');
         player.setAttribute('playsinline', '');
-        player.src = src;
         callbacks.current.onPlayer?.(player);
         player.addEventListener('loadedmetadata', restorePlayback);
         player.addEventListener('loadeddata', restorePlayback);
@@ -135,7 +136,6 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
     <div className="absolute inset-0 bg-black">
       <movi-player
         ref={elementRef}
-        src={src}
         engine="wasm"
         wasmurl={MOVI_WASM}
         preload="metadata"
