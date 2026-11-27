@@ -7,8 +7,10 @@ const cors = {
 const allowed = host => host === "archive.org" || host.endsWith(".archive.org");
 const jsonHeaders = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 const CATALOG_ORIGIN = "https://reelboxe.vercel.app/api/movies";
-const FRESH_TTL = 300;
-const STALE_TTL = 86400;
+// Catalogue cache keys include the Redis mutation version. Keep each immutable version warm
+// for one year; a movie write advances the version and makes the previous namespace unreachable.
+const FRESH_TTL = 31_536_000;
+const STALE_TTL = 31_536_000;
 
 function withHeaders(response, extra = {}) {
   const headers = new Headers(response.headers);
