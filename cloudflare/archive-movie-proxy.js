@@ -141,7 +141,7 @@ async function cacheCatalogResponse(cache, freshKey, staleKey, body, source, ctx
     cache.put(freshKey, fresh.clone()),
     cache.put(staleKey, stale.clone())
   ]).catch(() => {}));
-  return withHeaders(fresh, { "X-Cache": source === "archive.org" ? "ARCHIVE-FALLBACK" : "EDGE-MISS" });
+  return withHeaders(fresh, { "X-Cache": source === "archive.org" ? "ARCHIVE-FALLBACK" : "EDGE-MISS", "Cache-Control": "no-store" });
 }
 
 export async function readCatalogCacheVersion() {
@@ -175,7 +175,7 @@ async function handleCatalog(request, ctx) {
   if (cacheEnabled) {
     try {
       const fresh = await cache.match(freshKey);
-      if (fresh) return withHeaders(fresh, { 'X-Cache': 'EDGE-HIT', 'X-Movies-Cache-Version': version });
+      if (fresh) return withHeaders(fresh, { 'X-Cache': 'EDGE-HIT', 'X-Movies-Cache-Version': version, 'Cache-Control': 'no-store' });
     } catch { /* Cache API failures fall through to origin/fallback. */ }
   }
 
@@ -188,7 +188,7 @@ async function handleCatalog(request, ctx) {
   originUrl.search = url.search;
   try {
     const origin = await fetch(originUrl.toString(), {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", "Cache-Control": "no-cache", Pragma: "no-cache" },
       signal: AbortSignal.timeout(7000)
     });
     if (origin.ok) {
@@ -209,7 +209,7 @@ async function handleCatalog(request, ctx) {
     }
   } catch { /* Vercel/Neon/Redis quota, rate-limit, or network failure. */ }
 
-  if (stale) return withHeaders(stale, { "X-Cache": "EDGE-STALE", "Warning": '110 - "Response is stale"', "Cache-Control": "public, max-age=60" });
+  if (stale) return withHeaders(stale, { "X-Cache": "EDGE-STALE", "Warning": '110 - "Response is stale"', "Cache-Control": "no-store" });
 
   try {
     const archiveData = await archiveCatalogFallback(url);
