@@ -201,7 +201,7 @@ export default function FilmPlayer({ movie, files }) {
             ref={videoRef}
             src={getArchiveStreamUrl(source)}
             controls
-            autoPlay
+            autoPlay={swapWasPlaying}
             playsInline
             className="absolute inset-0 w-full h-full bg-black"
             aria-label={movie.title}
