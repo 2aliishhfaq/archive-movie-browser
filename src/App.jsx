@@ -730,6 +730,12 @@ function AdminPanel() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save movie.');
+      if (data.unchanged) {
+        setManualMessage('No changes detected. The existing catalogue cache was kept.');
+        setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+        setEditingId(null);
+        return;
+      }
       announceMovieChange();
       setManualMessage(editingId ? 'Movie updated successfully.' : 'Movie published to the public catalogue.');
       setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
