@@ -55,15 +55,22 @@ async function redisPipeline(commands) {
   if (failed) throw new Error('Redis command failed: ' + failed.error);
   return entries.map(entry => entry.result);
 }
+async function getOrCreateCacheVersion() {
+  let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+  if (version) return String(version);
+
+  // Seed with the current epoch instead of "1". If Redis ever evicts this key,
+  // a recreated namespace cannot accidentally resurrect a year-old cache generation.
+  const seed = String(Date.now());
+  await redisPipeline([['SET', CACHE_VERSION_KEY, seed, 'NX']]);
+  [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+  return String(version || seed);
+}
+
 async function cached(key, load, ttl = CACHE_TTL) {
   if (!redisReady()) return { value: await load(), hit: false, configured: false };
   try {
-    let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
-    if (!version) {
-      await redisPipeline([['SET', CACHE_VERSION_KEY, '1', 'NX']]);
-      [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
-      version ||= '1';
-    }
+    const version = await getOrCreateCacheVersion();
     const cacheKey = 'movies:v' + version + ':' + key;
     const [stored] = await redisPipeline([['GET', cacheKey]]);
     if (stored) return { value: JSON.parse(stored), hit: true, configured: true };
@@ -83,12 +90,7 @@ async function invalidateCache() {
 async function currentCacheVersion() {
   if (!redisReady()) return { version: null, cacheable: false };
   try {
-    let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
-    if (!version) {
-      await redisPipeline([['SET', CACHE_VERSION_KEY, '1', 'NX']]);
-      [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
-    }
-    return { version: String(version || '1'), cacheable: true };
+    return { version: await getOrCreateCacheVersion(), cacheable: true };
   } catch (error) {
     console.error('redis-cache-version-unavailable', error.message);
     return { version: null, cacheable: false };
