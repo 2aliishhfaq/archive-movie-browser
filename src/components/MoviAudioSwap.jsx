@@ -20,11 +20,14 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
   const [duration, setDuration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('Loading audio tracks…');
+  const callbacks = useRef({});
+  callbacks.current = { onPlayer, onTimeUpdate, onPause, onFallback };
 
   useEffect(() => {
     let cancelled = false;
     let player;
     let restored = false;
+    let trackCheckTimer;
     const updateTracks = () => {
       if (!player || cancelled || typeof player.getAudioLangs !== 'function') return;
       const available = player.getAudioLangs() || [];
@@ -35,6 +38,7 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
       const active = normalized.find(track => track.active) || normalized[0];
       if (active) setSelected(active.lang);
       setMessage(normalized.length > 1 ? '' : 'No alternate audio tracks found in this video.');
+      if (normalized.length > 1 && trackCheckTimer) clearTimeout(trackCheckTimer);
     };
     const restorePlayback = () => {
       if (!player || cancelled || restored || !Number.isFinite(player.duration)) return;
@@ -52,13 +56,13 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
       if (!player || cancelled) return;
       setTime(Number(player.currentTime) || 0);
       setDuration(Number(player.duration) || 0);
-      onTimeUpdate?.();
+      callbacks.current.onTimeUpdate?.();
     };
     const onError = () => {
       if (!cancelled) {
         setLoading(false);
         setMessage('Audio player could not open this file. Returning to native playback…');
-        onFallback?.(Number(player?.currentTime) || startAt);
+        callbacks.current.onFallback?.(Number(player?.currentTime) || startAt);
       }
     };
 
@@ -73,22 +77,26 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
         player.setAttribute('preload', 'metadata');
         player.setAttribute('playsinline', '');
         player.src = src;
-        onPlayer?.(player);
+        callbacks.current.onPlayer?.(player);
         player.addEventListener('loadedmetadata', restorePlayback);
         player.addEventListener('loadeddata', restorePlayback);
         player.addEventListener('trackschange', updateTracks);
         player.addEventListener('timeupdate', onTick);
-        player.addEventListener('pause', onPause || (() => {}));
+        player.addEventListener('pause', () => callbacks.current.onPause?.());
         player.addEventListener('error', onError);
         player.addEventListener('errordisplay', onError);
         player.addEventListener('canplay', restorePlayback);
+        trackCheckTimer = setTimeout(() => {
+          if (!cancelled && tracks.length < 2) callbacks.current.onFallback?.(Number(player.currentTime) || startAt);
+        }, 4500);
       } catch {
-        onFallback?.(startAt);
+        callbacks.current.onFallback?.(startAt);
       }
     })();
 
     return () => {
       cancelled = true;
+      if (trackCheckTimer) clearTimeout(trackCheckTimer);
       if (player) {
         player.removeEventListener('loadedmetadata', restorePlayback);
         player.removeEventListener('loadeddata', restorePlayback);
@@ -99,7 +107,7 @@ export default function MoviAudioSwap({ src, startAt = 0, autoPlay = true, onPla
         player.pause?.();
       }
     };
-  }, [src]);
+  }, [src, startAt, autoPlay]);
 
   const switchAudio = async (language) => {
     const player = elementRef.current;
