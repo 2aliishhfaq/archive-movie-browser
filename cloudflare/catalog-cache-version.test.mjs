@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { catalogCacheKeys, readCatalogCacheVersion } from './archive-movie-proxy.js';
+import { catalogCacheKeys, catalogFallbackCacheKey, readCatalogCacheVersion } from './archive-movie-proxy.js';
 
 test('catalogue cache keys are versioned so mutations cannot reuse previous catalogue entries', () => {
   const [oldFresh, oldStale] = catalogCacheKeys('https://worker.test/catalog?limit=24&offset=0', '12');
   const [newFresh, newStale] = catalogCacheKeys('https://worker.test/catalog?limit=24&offset=0', '13');
   assert.notEqual(oldFresh.url, newFresh.url);
   assert.notEqual(oldStale.url, newStale.url);
-  assert.match(newFresh.url, /v3\/catalog\/13\/fresh/);
-  assert.match(newStale.url, /v3\/catalog\/13\/stale/);
+  assert.match(newFresh.url, /v4/catalog\/13\/fresh/);
+  assert.match(newStale.url, /v4/catalog\/13\/stale/);
   assert.match(newFresh.url, /limit=24/);
 });
 
@@ -30,4 +30,12 @@ test('catalogue cache version reader accepts only a cacheable numeric Redis vers
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('outage fallback uses a separate versioned cache key from canonical catalogue data', () => {
+  const [fresh] = catalogCacheKeys('https://worker.test/catalog?limit=24&offset=0', '42');
+  const fallback = catalogFallbackCacheKey('https://worker.test/catalog?limit=24&offset=0', '42');
+  assert.match(fresh.url, /v4\\/catalog\\/42\\/fresh/);
+  assert.match(fallback.url, /v4\\/catalog\\/42\\/fallback/);
+  assert.notEqual(fresh.url, fallback.url);
 });
