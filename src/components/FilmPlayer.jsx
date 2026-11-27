@@ -20,6 +20,7 @@ const clock = (seconds) => {
 export default function FilmPlayer({ movie, files }) {
   const [source, setSource] = useState(undefined); // undefined = looking, null = use the embed
   const [resumedAt, setResumedAt] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const [frames, setFrames] = useState([]);
   const [hover, setHover] = useState(null); // { x (0..1), seconds } while the pointer is on the scrub strip
   const videoRef = useRef(null);
@@ -42,6 +43,7 @@ export default function FilmPlayer({ movie, files }) {
   useEffect(() => {
     let cancelled = false;
     setSource(undefined);
+    queue.current = [];
     archiveService.getMetadata(movie.identifier)
       .then(data => {
         if (cancelled) return;
@@ -53,7 +55,7 @@ export default function FilmPlayer({ movie, files }) {
       })
       .catch(() => { if (!cancelled) setSource(null); });
     return () => { cancelled = true; };
-  }, [movie.identifier, files?.join('|')]);
+  }, [movie.identifier, files?.join('|'), retryCount]);
 
   // The file would not play, or played sound over a black picture (a codec the browser has
   // no decoder for): the next file, or Archive.org's player when there is none left
@@ -146,14 +148,24 @@ export default function FilmPlayer({ movie, files }) {
 
   if (source === null) {
     return (
-      <iframe
-        src={`https://archive.org/embed/${movie.identifier}`}
-        className="absolute inset-0 w-full h-full"
-        frameBorder="0"
-        allowFullScreen
-        allow="autoplay; fullscreen"
-        title={movie.title}
-      />
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center text-gray-300" role="alert">
+        <p className="text-sm">A browser-compatible video file could not be loaded for this film.</p>
+        <button
+          type="button"
+          className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+          onClick={() => setRetryCount(count => count + 1)}
+        >
+          Try again
+        </button>
+        <a
+          className="text-xs text-gray-400 underline underline-offset-4 hover:text-white"
+          href={`https://archive.org/details/${encodeURIComponent(movie.identifier)}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Check the film on Archive.org
+        </a>
+      </div>
     );
   }
 
@@ -167,7 +179,7 @@ export default function FilmPlayer({ movie, files }) {
         playsInline
         className="absolute inset-0 w-full h-full bg-black"
         aria-label={movie.title}
-        onLoadedMetadata={loaded}
+        onLoadedData={loaded}
         onTimeUpdate={() => { countWatching(); savePosition(); }}
         onPause={() => minutes.current.flush()}
         onError={nextFile}
