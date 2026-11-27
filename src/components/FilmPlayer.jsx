@@ -13,12 +13,11 @@ const clock = (seconds) => {
   return s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${Math.floor(s / 60)}:${pad(s % 60)}`;
 };
 
-// Plays the film in our own <video>, so the keyboard works (arrows scrub, Escape still closes the
-// dialog) and the position is remembered. Falls back to Archive.org's embedded player whenever
-// there is no file a browser can stream, or the one we picked fails to play.
+// Plays films exclusively in our own HTML5 <video> element. If no compatible file loads,
+// show an in-app error state; never switch to Archive.org's embedded player.
 // `files`: the file names to play, best first, when the upload holds several films (see UploadFilms)
 export default function FilmPlayer({ movie, files }) {
-  const [source, setSource] = useState(undefined); // undefined = looking, null = use the embed
+  const [source, setSource] = useState(undefined); // undefined = looking, null = no playable HTML5 source
   const [resumedAt, setResumedAt] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
   const [frames, setFrames] = useState([]);
@@ -31,12 +30,12 @@ export default function FilmPlayer({ movie, files }) {
   const minutes = useWatchReport('film', { film: movie.identifier }, movie.identifier, subtitlesOn);
   const subtitles = useSubtitles(movie.identifier, source);
 
-  // Which player ended up showing the film: ours, or Archive.org's as the fallback
+  // Record a play only after an actual HTML5 source has been selected.
   useEffect(() => {
-    if (source !== undefined) {
+    if (source) {
       let list;
       try { const from = JSON.parse(sessionStorage.getItem('played-from') || 'null'); if (from?.film === movie.identifier) list = from.list; } catch { /* ignore */ }
-      track('Play', { film: movie.identifier, player: source ? 'own' : 'archive', ...(list && { list }), screen: screenType() });
+      track('Play', { film: movie.identifier, player: 'own', ...(list && { list }), screen: screenType() });
     }
   }, [source, movie.identifier]);
 
@@ -57,8 +56,7 @@ export default function FilmPlayer({ movie, files }) {
     return () => { cancelled = true; };
   }, [movie.identifier, files?.join('|'), retryCount]);
 
-  // The file would not play, or played sound over a black picture (a codec the browser has
-  // no decoder for): the next file, or Archive.org's player when there is none left
+  // If a file fails or has no decoded picture, try the next candidate. Never embed Archive.org.
   const nextFile = () => { track('Copy failed', { film: movie.identifier }); setSource(queue.current.shift() || null); };
 
   const loaded = () => {
