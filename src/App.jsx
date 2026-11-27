@@ -48,6 +48,17 @@ function getArchiveEmbedUrl(source) {
 }
 
 const CATALOG_EDGE_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev';
+const MOVIE_CHANGE_KEY = 'reelbox-movies-updated';
+
+function announceMovieChange() {
+  try {
+    const channel = new BroadcastChannel('reelbox-movies');
+    channel.postMessage({ type: 'changed' });
+    channel.close();
+  } catch { /* BroadcastChannel is optional; storage events cover other tabs. */ }
+  try { localStorage.setItem(MOVIE_CHANGE_KEY, String(Date.now())); }
+  catch { /* The server-side cache version remains authoritative. */ }
+}
 
 async function fetchCategoryOptions(signal) {
   try {
@@ -385,6 +396,7 @@ function MovieBrowser() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cache, setCache] = useState('');
+  const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallNotice, setShowInstallNotice] = useState(false);
   const [installHelp, setInstallHelp] = useState(false);
@@ -407,16 +419,30 @@ function MovieBrowser() {
         .then(next => { if (active) setCategories(next); })
         .catch(() => {});
     };
+    const refreshAll = () => {
+      refreshCategories();
+      setCatalogRefresh(value => value + 1);
+    };
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshCategories();
+      if (document.visibilityState === 'visible') refreshAll();
+    };
+    const onStorage = event => {
+      if (event.key === MOVIE_CHANGE_KEY) refreshAll();
+    };
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('reelbox-movies') : null;
+    if (channel) channel.onmessage = event => {
+      if (event.data?.type === 'changed') refreshAll();
     };
     refreshCategories();
-    window.addEventListener('focus', refreshCategories);
+    window.addEventListener('focus', refreshAll);
+    window.addEventListener('storage', onStorage);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       active = false;
       controller?.abort();
-      window.removeEventListener('focus', refreshCategories);
+      channel?.close();
+      window.removeEventListener('focus', refreshAll);
+      window.removeEventListener('storage', onStorage);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
@@ -436,7 +462,7 @@ function MovieBrowser() {
       .catch(e => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [params]);
+  }, [params, catalogRefresh]);
 
   useEffect(() => {
     let deferred = null;
@@ -702,6 +728,7 @@ function AdminPanel() {
       const response = await fetch('/api/movies', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() }, body: JSON.stringify({ id }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed.');
+      announceMovieChange();
       setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
       setManualMessage('Movie deleted from the catalogue.');
       fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
@@ -726,6 +753,7 @@ function AdminPanel() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save movie.');
+      announceMovieChange();
       setManualMessage(editingId ? 'Movie updated successfully.' : 'Movie published to the public catalogue.');
       setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
       setEditingId(null);
@@ -750,6 +778,7 @@ function AdminPanel() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Import request failed.');
+      if (data.importedCount > 0) announceMovieChange();
       setResult(data);
       await Promise.all([
         loadAdminMovies(),
