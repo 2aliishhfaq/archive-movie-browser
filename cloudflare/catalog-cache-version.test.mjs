@@ -9,7 +9,7 @@ test('catalogue cache keys are versioned so mutations cannot reuse previous cata
   assert.notEqual(oldStale.url, newStale.url);
   assert.match(newFresh.url, /v4\/catalog\/13\/fresh/);
   assert.match(newStale.url, /v4\/catalog\/13\/stale/);
-  assert.match(newFresh.url, /v4\/catalog\/13\/fresh/);
+  assert.match(newFresh.url, /limit=24/);
 });
 
 test('catalogue cache version reader accepts only a cacheable numeric Redis version', async () => {
