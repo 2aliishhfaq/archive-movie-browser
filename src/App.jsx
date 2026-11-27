@@ -321,6 +321,28 @@ async function fetchArchiveCatalog(searchParams) {
 
 async function fetchCatalogData(searchParams) {
   const query = searchParams.toString();
+
+  // Category views are small, dynamic facets. Read them from the database-backed
+  // API first so a category edit is not hidden behind a stale Worker edge entry.
+  if (searchParams.has('category')) {
+    try {
+      const response = await fetch('/api/movies' + (query ? '?' + query : ''), {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(7000),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          data: data.movies
+            ? { ...data, movies: data.movies.map(movie => ({ ...movie, direct_archive: true })) }
+            : data,
+          cache: 'VERCEL-DIRECT',
+        };
+      }
+    } catch { /* Fall through to the edge catalogue if the database API is unavailable. */ }
+  }
+
   try {
     const response = await fetch(CATALOG_EDGE_URL + '/catalog' + (query ? '?' + query : ''), {
       headers: { Accept: 'application/json' },
