@@ -78,6 +78,20 @@ async function invalidateCache() {
   try { await redisPipeline([['INCR', CACHE_VERSION_KEY]]); }
   catch (error) { console.error('redis-invalidation-failed', error.message); }
 }
+async function currentCacheVersion() {
+  if (!redisReady()) return { version: null, cacheable: false };
+  try {
+    let [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+    if (!version) {
+      await redisPipeline([['SET', CACHE_VERSION_KEY, '1', 'NX']]);
+      [version] = await redisPipeline([['GET', CACHE_VERSION_KEY]]);
+    }
+    return { version: String(version || '1'), cacheable: true };
+  } catch (error) {
+    console.error('redis-cache-version-unavailable', error.message);
+    return { version: null, cacheable: false };
+  }
+}
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return Promise.resolve(req.body);
   if (typeof req.body === 'string') { try { return Promise.resolve(req.body ? JSON.parse(req.body) : {}); } catch { return Promise.reject(new Error('Invalid JSON')); } }
@@ -216,6 +230,16 @@ export default async function handler(req, res) {
     return json(res, 405, { error: 'Method not allowed' });
   }
   if (method !== 'GET' && !isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
+  // The Cloudflare catalogue edge reads this tiny, uncached version before
+  // looking up its own cache. A successful admin mutation increments the
+  // Redis version, instantly moving all catalogue requests to a fresh key.
+  if (method === 'GET' && req.query?.cacheVersion === '1') {
+    const state = await currentCacheVersion();
+    return json(res, 200, state, {
+      'Cache-Control': 'no-store, max-age=0',
+      'X-Movies-Cache-Version': state.version || 'uncacheable'
+    });
+  }
   if (!process.env.DATABASE_URL) return json(res, 503, { error: 'Database is not configured' });
   const sql = neon(process.env.DATABASE_URL, { fetchOptions: { signal: AbortSignal.timeout(8000) } });
   try {
