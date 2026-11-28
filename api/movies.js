@@ -97,7 +97,16 @@ async function markCatalogueDirty() {
 
 async function readActiveCatalogueSnapshot() {
   if (!redisReady()) return { configured: false, active: false };
-  const [stored] = await redisPipeline([['GET', CATALOGUE_ACTIVE_KEY]]);
+  const [state] = await redisPipeline([[
+    'EVAL',
+    "return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2])}",
+    '2',
+    CATALOGUE_ACTIVE_KEY,
+    CATALOGUE_META_KEY,
+  ]]);
+  const stored = Array.isArray(state) ? state[0] : null;
+  const meta = Array.isArray(state) ? state[1] : null;
+  if (!stored && meta) throw new Error('Active catalogue snapshot was evicted; refusing to expose unsynced Neon changes.');
   if (!stored) return { configured: true, active: false };
   let snapshot;
   try { snapshot = JSON.parse(stored); }
