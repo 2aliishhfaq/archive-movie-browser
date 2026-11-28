@@ -719,7 +719,7 @@ function AdminPanel() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Database sync failed.');
       setCacheStatus({ configured: true, active: true, pendingChanges: false, version: data.version, syncedAt: data.syncedAt, movieCount: data.movieCount, bytes: data.bytes });
-      setSyncMessage(`Sync successful — ${data.movieCount} movies are live. Edge caches refresh within 15 seconds.`);
+      setSyncMessage(`Sync successful — ${data.movieCount} movies are live; cleaned ${data.clearedLegacyKeys || 0} old cache keys. Edge caches refresh within 15 seconds.`);
       announceMovieChange();
       await fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
     } catch (err) {
@@ -880,10 +880,10 @@ function AdminPanel() {
           <div className="dashboard-section-heading"><p className="eyebrow">PUBLIC CATALOGUE CACHE</p><h2>Database snapshot</h2><p>Movie edits and imports stay private to Neon until you run syncDB. Visitors continue seeing the last successful snapshot.</p></div>
           <div className="admin-stats">
             <div><strong>{cacheStatus?.active ? cacheStatus.movieCount : '—'}</strong><span>CACHED MOVIES</span></div>
-            <div><strong>{cacheStatus?.active ? 'ACTIVE' : 'NOT SYNCED'}</strong><span>SNAPSHOT</span></div>
+            <div><strong>{cacheStatus?.active ? 'ACTIVE' : cacheStatus?.snapshotMissing ? 'MISSING' : 'NOT SYNCED'}</strong><span>SNAPSHOT</span></div>
             <div><strong>{cacheStatus ? (cacheStatus.pendingChanges ? 'YES' : 'NO') : '—'}</strong><span>PENDING CHANGES</span></div>
           </div>
-          <p className="admin-security">{cacheStatus?.syncedAt ? 'Last successful sync: ' + new Date(cacheStatus.syncedAt).toLocaleString() : 'No manual snapshot has been created yet. Run the first sync to publish the current Neon catalogue.'}</p>
+          <p className="admin-security">{cacheStatus?.snapshotMissing ? 'The last snapshot is missing from Redis. Run syncDB to rebuild it; public requests are protected from showing unsynced Neon changes.' : cacheStatus?.syncedAt ? 'Last successful sync: ' + new Date(cacheStatus.syncedAt).toLocaleString() : 'No manual snapshot has been created yet. Run the first sync to publish the current Neon catalogue.'}</p>
           {cacheStatus?.bytes ? <p className="admin-security">Snapshot size: {(cacheStatus.bytes / 1024).toFixed(1)} KB · Version {cacheStatus.version}</p> : null}
           <button className="admin-submit" type="button" onClick={syncDatabase} disabled={syncBusy}>{syncBusy ? 'SYNCING DATABASE…' : '↻ syncDB'}</button>
           {syncMessage && <div className="admin-message" role="status">{syncMessage}</div>}
