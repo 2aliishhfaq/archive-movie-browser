@@ -171,7 +171,7 @@ async function syncCatalogue(sql) {
   if (lock !== 'OK') return { ok: false, status: 409, error: 'A catalogue sync is already running. Please wait for it to finish.' };
 
   try {
-    const rows = await sql`SELECT id, movie_name, category, poster, movie_link
+    const rows = await sql`SELECT id, movie_name, category, poster, movie_link, movie_links
       FROM public.movies ORDER BY id DESC`;
     const version = String(Date.now());
     const syncedAt = new Date().toISOString();
@@ -224,7 +224,7 @@ function readBody(req) {
     let raw = '';
     req.on('data', chunk => {
       raw += chunk;
-      if (raw.length > 16_384) { reject(new Error('Body too large')); req.destroy(); }
+      if (raw.length > 96_000) { reject(new Error('Body too large')); req.destroy(); }
     });
     req.on('end', () => {
       try { resolve(raw ? JSON.parse(raw) : {}); }
@@ -233,16 +233,38 @@ function readBody(req) {
     req.on('error', reject);
   });
 }
-function validateMovie(body) {
+export function validateMovie(body) {
   const movie_name = typeof body.movie_name === 'string' ? body.movie_name.trim() : '';
   const category = typeof body.category === 'string' ? body.category.trim() : null;
   const poster = typeof body.poster === 'string' && body.poster.trim() ? body.poster.trim() : null;
-  const movie_link = typeof body.movie_link === 'string' ? body.movie_link.trim() : '';
+  let links = body.movie_links;
+  if (typeof links === 'string') {
+    try { links = JSON.parse(links); } catch { return 'movie_links must be a valid JSON array'; }
+  }
+  if (links === undefined || links === null) {
+    links = typeof body.movie_link === 'string' && body.movie_link.trim()
+      ? [{ label: 'Full Movie', url: body.movie_link.trim() }] : [];
+  }
+  if (!Array.isArray(links) || links.length < 1 || links.length > 100) {
+    return 'Add between 1 and 100 video links in the JSON array';
+  }
+  const movie_links = [];
+  const seen = new Set();
+  for (const entry of links) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return 'Each movie_links item must contain label and url';
+    const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    if (url.length > 1024) return 'Episode URL is too long (max 1024 characters)';
+    if (!label || label.length > 80) return 'Each episode label is required (max 80 characters)';
+    if (!validMovieLink(url)) return 'Every episode URL must be an HTTPS Internet Archive URL';
+    if (seen.has(url)) return 'Duplicate episode URLs are not allowed';
+    seen.add(url);
+    movie_links.push({ label, url });
+  }
   if (!movie_name || movie_name.length > 240) return 'movie_name is required (max 240 characters)';
   if (category && category.length > 100) return 'category is too long (max 100 characters)';
   if (!validPoster(poster)) return 'poster must be a valid HTTPS URL';
-  if (!validMovieLink(movie_link)) return 'movie_link must be an HTTPS Internet Archive URL';
-  return { movie_name, category: category || null, poster, movie_link };
+  return { movie_name, category: category || null, poster, movie_link: movie_links[0].url, movie_links };
 }
 
 function pickPlayableFile(files = []) {
@@ -322,9 +344,9 @@ async function importArchiveMovies(body, sql, res) {
         const firstSubject = Array.isArray(rawSubject) ? rawSubject[0] : rawSubject;
         const movieCategory = category || (typeof firstSubject === 'string' && firstSubject.trim()
           ? firstSubject.trim().slice(0, 100) : 'Feature Films');
-        const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link)
-          VALUES (${title}, ${movieCategory}, ${poster}, ${movieLink})
-          RETURNING id, movie_name, category, poster, movie_link`;
+        const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link, movie_links)
+          VALUES (${title}, ${movieCategory}, ${poster}, ${movieLink}, '[]'::jsonb)
+          RETURNING id, movie_name, category, poster, movie_link, movie_links`;
         return rows[0] || null;
       } catch (error) {
         console.error('archive-import-item-failed', identifier, error.message);
@@ -409,7 +431,7 @@ export default async function handler(req, res) {
       const load = async () => {
         if (id !== undefined) {
           if (!validId(id)) return { movie: null };
-          const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE id = ${String(id)} LIMIT 1`;
+          const rows = await sql`SELECT id, movie_name, category, poster, movie_link, movie_links FROM public.movies WHERE id = ${String(id)} LIMIT 1`;
           return { movie: rows[0] || null };
         }
         if (req.query?.categories === '1') {
@@ -419,7 +441,7 @@ export default async function handler(req, res) {
             ORDER BY LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) ASC, REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g') ASC`;
           return { categories: rows.map(row => row.category) };
         }
-        const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g'))) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
+        const rows = await sql`SELECT id, movie_name, category, poster, movie_link, movie_links FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g'))) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g')))`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
       };
@@ -442,10 +464,12 @@ export default async function handler(req, res) {
       if (body.action === 'import') return await importArchiveMovies(body, sql, res);
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
-      const validation = await validateArchiveVideoUrl(movie.movie_link);
-      if (!validation.ok) return json(res, 422, { error: validation.error, validation: 'archive_video' });
-      movie.movie_link = validation.movieLink;
-      const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link) VALUES (${movie.movie_name}, ${movie.category}, ${movie.poster}, ${movie.movie_link}) RETURNING id, movie_name, category, poster, movie_link`;
+      const validations = await Promise.all(movie.movie_links.map(link => validateArchiveVideoUrl(link.url)));
+      const failed = validations.findIndex(result => !result.ok);
+      if (failed >= 0) return json(res, 422, { error: `${movie.movie_links[failed].label}: ${validations[failed].error}`, validation: 'archive_video', episodeIndex: failed });
+      movie.movie_links = movie.movie_links.map((link, index) => ({ ...link, url: validations[index].movieLink }));
+      movie.movie_link = movie.movie_links[0].url;
+      const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link, movie_links) VALUES (${movie.movie_name}, ${movie.category}, ${movie.poster}, ${movie.movie_link}, ${JSON.stringify(movie.movie_links)}::jsonb) RETURNING id, movie_name, category, poster, movie_link, movie_links`;
       await markCatalogueDirty();
       return json(res, 201, { movie: rows[0] });
     }
@@ -454,18 +478,22 @@ export default async function handler(req, res) {
     if (method === 'PUT') {
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
-      const validation = await validateArchiveVideoUrl(movie.movie_link);
-      if (!validation.ok) return json(res, 422, { error: validation.error, validation: 'archive_video' });
-      movie.movie_link = validation.movieLink;
-      const rows = await sql`UPDATE public.movies SET movie_name = ${movie.movie_name}, category = ${movie.category}, poster = ${movie.poster}, movie_link = ${movie.movie_link}
+      const validations = await Promise.all(movie.movie_links.map(link => validateArchiveVideoUrl(link.url)));
+      const failed = validations.findIndex(result => !result.ok);
+      if (failed >= 0) return json(res, 422, { error: `${movie.movie_links[failed].label}: ${validations[failed].error}`, validation: 'archive_video', episodeIndex: failed });
+      movie.movie_links = movie.movie_links.map((link, index) => ({ ...link, url: validations[index].movieLink }));
+      movie.movie_link = movie.movie_links[0].url;
+      const linksJson = JSON.stringify(movie.movie_links);
+      const rows = await sql`UPDATE public.movies SET movie_name = ${movie.movie_name}, category = ${movie.category}, poster = ${movie.poster}, movie_link = ${movie.movie_link}, movie_links = ${linksJson}::jsonb
         WHERE id = ${String(body.id)}
           AND (movie_name IS DISTINCT FROM ${movie.movie_name}
             OR category IS DISTINCT FROM ${movie.category}
             OR poster IS DISTINCT FROM ${movie.poster}
-            OR movie_link IS DISTINCT FROM ${movie.movie_link})
-        RETURNING id, movie_name, category, poster, movie_link`;
+            OR movie_link IS DISTINCT FROM ${movie.movie_link}
+            OR movie_links IS DISTINCT FROM ${linksJson}::jsonb)
+        RETURNING id, movie_name, category, poster, movie_link, movie_links`;
       if (!rows.length) {
-        const existing = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE id = ${String(body.id)} LIMIT 1`;
+        const existing = await sql`SELECT id, movie_name, category, poster, movie_link, movie_links FROM public.movies WHERE id = ${String(body.id)} LIMIT 1`;
         if (!existing.length) return json(res, 404, { error: 'Movie not found' });
         return json(res, 200, { movie: existing[0], unchanged: true });
       }

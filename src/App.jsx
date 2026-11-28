@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getArchiveStreamUrl, isFmp4FileName } from './services/archiveStream.js';
 import { normalizeMovieCategories } from './services/movieCategories.js';
 import { readCachedCatalogue, writeCachedCatalogue, readCachedCategories, writeCachedCategories } from './services/catalogueResilience.js';
+import { normalizeEpisodeLinks, parseEpisodeLinksJson } from './services/episodeLinks.js';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+const EMPTY_EPISODE_JSON = JSON.stringify([{ label: 'Episode 1', url: '' }], null, 2);
 
 function getDownloadUrl(source, movieTitle, directArchive = false) {
   try {
@@ -430,6 +432,9 @@ function MovieBrowser() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
+  const [selectedEpisodeIndex, setSelectedEpisodeIndex] = useState(0);
+  const selectedEpisodes = useMemo(() => normalizeEpisodeLinks(selected), [selected]);
+  const selectedEpisode = selectedEpisodes[selectedEpisodeIndex] || selectedEpisodes[0] || null;
   const [playback, setPlayback] = useState({ status: 'idle', sources: [], index: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -574,7 +579,7 @@ function MovieBrowser() {
     setCategory(nextCategory);
   }
 
-  const archivePlayerUrl = selected ? getArchiveEmbedUrl(selected.movie_link) : null;
+  const archivePlayerUrl = selectedEpisode ? getArchiveEmbedUrl(selectedEpisode.url) : null;
   const activeVideoSource = playback.sources[playback.index] || null;
 
   useEffect(() => {
@@ -585,7 +590,7 @@ function MovieBrowser() {
     const controller = new AbortController();
     let active = true;
     setPlayback({ status: 'resolving', sources: [], index: 0 });
-    resolveArchivePlaybackSources(selected.movie_link, controller.signal)
+    resolveArchivePlaybackSources(selectedEpisode?.url || selected.movie_link, controller.signal)
       .then(sources => {
         if (!active) return;
         setPlayback(sources.length
@@ -599,7 +604,7 @@ function MovieBrowser() {
       active = false;
       controller.abort();
     };
-  }, [selected?.id, selected?.movie_link]);
+  }, [selected?.id, selectedEpisode?.url]);
 
   useEffect(() => {
     if (!selected) return undefined;
@@ -643,7 +648,7 @@ function MovieBrowser() {
       <div className="section-heading"><div><p className="eyebrow">THE COLLECTION</p><h2>{category || 'Browse films'}</h2></div><span className="count">{total.toLocaleString()} FILMS {cache ? '· CACHE ' + cache : ''}</span></div>
       {error && <div className="notice error">{error}. Please try again shortly.</div>}
       {loading ? <div className="grid">{Array.from({length:12},(_,i)=><div className="skeleton-card" key={i}/>)}</div>
-      : movies.length ? <div className="grid">{movies.map(movie=><button className="movie-card" key={movie.id} onClick={()=>setSelected(movie)}>
+      : movies.length ? <div className="grid">{movies.map(movie=><button className="movie-card" key={movie.id} onClick={()=>{ setSelected(movie); setSelectedEpisodeIndex(0); }}>
         <span className="poster-wrap"><img src={movie.poster || imageFallback} alt="" loading="lazy" onError={e=>{e.currentTarget.src=imageFallback}}/><span className="play-badge">▶</span></span>
         <span className="movie-meta"><strong>{movie.movie_name}</strong><small>{movie.category || 'UNCATEGORIZED'}</small></span>
       </button>)}</div>
@@ -668,6 +673,7 @@ function MovieBrowser() {
       <div className="player-modal-top player-modal-top-clean">
         <button className="close" onClick={()=>setSelected(null)} aria-label="Close player">×</button>
       </div>
+      {selectedEpisodes.length > 1 && <nav className="episode-tabs" aria-label="Choose episode">{selectedEpisodes.map((episode, index) => <button key={`${episode.url}-${index}`} type="button" className={'episode-tab' + (index === selectedEpisodeIndex ? ' active' : '')} aria-pressed={index === selectedEpisodeIndex} onClick={() => setSelectedEpisodeIndex(index)}>{episode.label}</button>)}</nav>}
       <div className="video-frame">
         {playback.status === 'idle' || playback.status === 'resolving'
           ? <div className="player-loading" role="status"><span className="player-spinner" /><strong>Preparing fast-start video…</strong><small>Finding the best browser-compatible Archive file</small></div>
@@ -679,9 +685,9 @@ function MovieBrowser() {
                   onPlaybackError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })} />
             : archivePlayerUrl
               ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
-              : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
+              : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selectedEpisode?.url || selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
       </div>
-      <div className="player-info"><div><h2>{selected.movie_name}</h2></div><span className="download-caption">CLICK HERE TO DOWNLOAD DUAL AUDIO MOVIE (ENGLISH + HINDI)</span><a className="download-button" href={getDownloadUrl(selected.movie_link, selected.movie_name, selected.direct_archive)} aria-label={'Download ' + selected.movie_name} download>DOWNLOAD NOW ↓</a></div>
+      <div className="player-info"><div><h2>{selected.movie_name}</h2></div><span className="download-caption">CLICK HERE TO DOWNLOAD DUAL AUDIO MOVIE (ENGLISH + HINDI)</span><a className="download-button" href={getDownloadUrl(selectedEpisode?.url || selected.movie_link, `${selected.movie_name} ${selectedEpisode?.label || ''}`, selected.direct_archive)} aria-label={'Download ' + selected.movie_name + ' ' + (selectedEpisode?.label || '')} download>DOWNLOAD {selectedEpisode?.label || 'NOW'} ↓</a></div>
     </section></div>}
   </main>;
 }
@@ -697,7 +703,7 @@ function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const [manualMovie, setManualMovie] = useState({ movie_name: '', category: '', poster: '', movie_link: '' });
+  const [manualMovie, setManualMovie] = useState({ movie_name: '', category: '', poster: '', movie_links: EMPTY_EPISODE_JSON });
   const [manualBusy, setManualBusy] = useState(false);
   const [manualMessage, setManualMessage] = useState('');
   const [adminMovies, setAdminMovies] = useState([]);
@@ -802,25 +808,27 @@ function AdminPanel() {
 
   function editMovie(movie) {
     setEditingId(movie.id);
-    setManualMovie({ movie_name: movie.movie_name || '', category: movie.category || '', poster: movie.poster || '', movie_link: movie.movie_link || '' });
+    setManualMovie({ movie_name: movie.movie_name || '', category: movie.category || '', poster: movie.poster || '', movie_links: JSON.stringify(normalizeEpisodeLinks(movie), null, 2) });
     document.getElementById('movie-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   async function publishMovie(event) {
     event.preventDefault();
     setManualMessage('');
+    const parsedEpisodes = parseEpisodeLinksJson(manualMovie.movie_links);
+    if (!parsedEpisodes.ok) { setManualMessage(parsedEpisodes.error); return; }
     setManualBusy(true);
     try {
       const response = await fetch('/api/movies', {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
-        body: JSON.stringify(editingId ? { ...manualMovie, id: editingId } : manualMovie),
+        body: JSON.stringify({ ...manualMovie, movie_links: parsedEpisodes.links, ...(editingId ? { id: editingId } : {}) }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save movie.');
       if (data.unchanged) {
         setManualMessage('No changes detected. The existing catalogue cache was kept.');
-        setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+        setManualMovie({ movie_name: '', category: '', poster: '', movie_links: EMPTY_EPISODE_JSON });
         setEditingId(null);
         return;
       }
@@ -828,7 +836,7 @@ function AdminPanel() {
         ? 'Movie updated in Neon. The public catalogue stays unchanged until you run syncDB.'
         : 'Movie saved in Neon. It will appear publicly after you run syncDB.');
       await loadCacheStatus();
-      setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
+      setManualMovie({ movie_name: '', category: '', poster: '', movie_links: EMPTY_EPISODE_JSON });
       setEditingId(null);
       await Promise.all([
         loadAdminMovies(),
@@ -907,16 +915,17 @@ function AdminPanel() {
           {syncMessage && <div className="admin-message" role="status">{syncMessage}</div>}
         </section>
         <section className="dashboard-section" id="movie-editor">
-          <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Paste an Internet Archive video URL. We verify the item and playable video file before publishing it to the public catalog.</p></div>
+          <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Add one or more Internet Archive episode URLs in the JSON array. Every playable file is verified before the poster is published to the public catalog.</p></div>
           <form className="admin-form" onSubmit={publishMovie}>
             <label>MOVIE TITLE<input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required /></label>
             <div className="admin-fields">
               <label>CATEGORY<input list="reelbox-category-options" value={manualMovie.category} onChange={e => setManualMovie({...manualMovie, category:e.target.value})} placeholder="e.g. Action, Romantic, Animation, Kids Cartoon" maxLength={100} /></label>
               <label>POSTER IMAGE URL<input value={manualMovie.poster} onChange={e => setManualMovie({...manualMovie, poster:e.target.value})} placeholder="https://..." type="url" /></label>
             </div>
-            <label>INTERNET ARCHIVE VIDEO URL<input value={manualMovie.movie_link} onChange={e => setManualMovie({...manualMovie, movie_link:e.target.value})} placeholder="https://archive.org/download/..." type="url" required /></label>
+            <label>EPISODE LINKS — JSON ARRAY<textarea className="episode-json-input" value={manualMovie.movie_links} onChange={e => setManualMovie({...manualMovie, movie_links:e.target.value})} spellCheck="false" rows={8} required aria-describedby="episode-json-help" /></label>
+            <p id="episode-json-help" className="admin-security">Har episode ka label aur Archive.org URL isi aik box mein dein. Har URL metadata se verify hoga; maximum 100 episodes.</p>
             <button className="admin-submit" type="submit" disabled={manualBusy}>{manualBusy ? 'SAVING…' : editingId ? 'SAVE MOVIE CHANGES ↗' : 'PUBLISH TO USER CATALOG ↗'}</button>
-            {editingId && <button className="admin-clear" type="button" onClick={() => { setEditingId(null); setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' }); }}>CANCEL EDIT</button>}
+            {editingId && <button className="admin-clear" type="button" onClick={() => { setEditingId(null); setManualMovie({ movie_name: '', category: '', poster: '', movie_links: EMPTY_EPISODE_JSON }); }}>CANCEL EDIT</button>}
           </form>
           {manualMessage && <div className="admin-message" role="status">{manualMessage}</div>}
         </section>
