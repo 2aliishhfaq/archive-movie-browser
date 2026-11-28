@@ -346,6 +346,9 @@ export default async function handler(req, res) {
       const limit = Math.min(adminView ? 500 : 100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 24));
       const offset = Math.max(0, Number.parseInt(req.query?.offset, 10) || 0);
       const key = JSON.stringify({ id: id || null, q, category, limit, offset, categories: req.query?.categories === '1' });
+      const publicCacheHeaders = !adminView && req.query?.edgeCache === '1'
+        ? { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' }
+        : { 'Cache-Control': 'no-store, max-age=0' };
       if (!adminView) {
         const state = await readActiveCatalogueSnapshot();
         if (state.active) {
@@ -360,7 +363,7 @@ export default async function handler(req, res) {
           return json(res, 200, result, {
             'X-Cache': 'SNAPSHOT-HIT',
             'X-Movies-Cache-Version': state.snapshot.version,
-            'Cache-Control': 'no-store, max-age=0',
+            ...publicCacheHeaders,
           });
         }
       }
@@ -387,8 +390,8 @@ export default async function handler(req, res) {
         : await cached(key, load, q ? SEARCH_CACHE_TTL : CACHE_TTL);
       return json(res, 200, result.value, {
         'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED',
-        // Redis is the canonical catalogue cache; Vercel must not retain an older response.
-        'Cache-Control': 'no-store, max-age=0',
+        // Only the explicit resilience URL is shared-cached by Vercel's CDN.
+        ...publicCacheHeaders,
       });
     }
     if (method === 'POST') {
