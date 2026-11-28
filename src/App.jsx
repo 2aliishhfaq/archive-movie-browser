@@ -76,11 +76,11 @@ async function fetchCategoryOptions(signal) {
     if (signal?.aborted) throw error;
   }
 
-  // Direct API is a resilience fallback only; its own Redis cache remains versioned.
+  // Direct API is a resilience fallback; Vercel's CDN shields Redis during Worker quota outages.
   try {
-    const response = await fetch('/api/movies?categories=1', {
+    const response = await fetch('/api/movies?categories=1&edgeCache=1', {
       headers: { Accept: 'application/json' },
-      cache: 'no-store',
+      cache: 'default',
       signal,
     });
     if (response.ok) {
@@ -386,7 +386,9 @@ async function fetchCatalogData(searchParams) {
   } catch { /* Cloudflare quota/network failures fall through to Vercel, then Archive.org. */ }
 
   try {
-    const response = await fetch('/api/movies' + (query ? '?' + query : ''), {
+    const directParams = new URLSearchParams(searchParams);
+    directParams.set('edgeCache', '1');
+    const response = await fetch('/api/movies?' + directParams.toString(), {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(7000),
     });
@@ -717,7 +719,7 @@ function AdminPanel() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Database sync failed.');
       setCacheStatus({ configured: true, active: true, pendingChanges: false, version: data.version, syncedAt: data.syncedAt, movieCount: data.movieCount, bytes: data.bytes });
-      setSyncMessage(`Sync successful — ${data.movieCount} movies are now live in the public cache.`);
+      setSyncMessage(`Sync successful — ${data.movieCount} movies are live. Edge caches refresh within 15 seconds.`);
       announceMovieChange();
       await fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
     } catch (err) {
