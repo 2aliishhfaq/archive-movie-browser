@@ -11,7 +11,7 @@
 
 ## Controlled preview load test
 
-This test is intentionally conservative: GET-only, at most 10 concurrent requests, at most 100 total requests, and it refuses the production domain. It does not request video bytes or hammer Archive.org.
+This test is intentionally conservative: GET-only, at most 10 concurrent requests, at most 100 total requests, and it refuses known production URLs (including the current deployment URL and main-branch alias). It does not request video bytes or hammer Archive.org.
 
 1. Open the Vercel preview deployment for the branch and copy its HTTPS URL.
 2. Run BASE_URL=https://<preview>.vercel.app CATALOGUE_URL=https://archive-movie-proxy.2aliishhfaq.workers.dev npm run test:capacity.
