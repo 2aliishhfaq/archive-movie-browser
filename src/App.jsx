@@ -621,7 +621,7 @@ function MovieBrowser() {
             ? isHlsSource(activeVideoSource)
               ? <HlsVideoPlayer key={activeVideoSource} source={activeVideoSource} poster={selected.poster}
                   onPlaybackError={() => setPlayback(current => ({ ...current, status: 'fallback', sources: [], index: 0 }))} />
-              : <video key={activeVideoSource} controls autoPlay playsInline crossOrigin="anonymous" preload="metadata" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
+              : <video key={activeVideoSource} controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
                   <source src={getArchiveStreamUrl(activeVideoSource)} type="video/mp4" />
                   <a href={activeVideoSource}>Open video source</a>
                 </video>
