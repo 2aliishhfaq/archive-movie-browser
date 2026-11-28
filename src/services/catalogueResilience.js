@@ -39,7 +39,9 @@ export function readCachedCatalogue(searchParams, storage, now = Date.now()) {
 }
 export function writeCachedCatalogue(searchParams, data, storage, now = Date.now()) {
   if (!data || !Array.isArray(data.movies) || !Number.isFinite(Number(data.total))) return false;
-  return safeWrite(cacheKey(searchParams), { savedAt: now, data }, storage);
+  const written = safeWrite(cacheKey(searchParams), { savedAt: now, data }, storage);
+  if (written) pruneCatalogueEntries(storage);
+  return written;
 }
 export function readCachedCategories(storage, now = Date.now()) {
   const entry = safeRead(CATEGORY_KEY, storage);
