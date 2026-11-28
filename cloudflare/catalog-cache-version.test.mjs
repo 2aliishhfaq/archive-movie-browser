@@ -42,8 +42,8 @@ test('outage fallback uses a separate versioned cache key from canonical catalog
 
 test('catalogue version pointers have stable edge cache keys', () => {
   const [fresh, stale] = catalogVersionCacheKeys('https://worker.test/catalog?limit=24');
-  assert.match(fresh.url, /v5\\/catalog-version\\/fresh/);
-  assert.match(stale.url, /v5\\/catalog-version\\/stale/);
+  assert.match(fresh.url, /v5\/catalog-version\/fresh/);
+  assert.match(stale.url, /v5\/catalog-version\/stale/);
   assert.notEqual(fresh.url, stale.url);
 });
 
