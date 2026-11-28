@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { validateArchiveVideoUrl } from '../src/services/archiveValidation.js';
 import { buildCatalogueResponse } from '../src/services/catalogueSnapshot.js';
 
-// Stable versioned catalogue entries stay warm for 10 years; mutations rotate the namespace.
+// Public catalogue reads use the last manually activated Redis snapshot.
 const CACHE_TTL = 315_360_000;
 const SEARCH_CACHE_TTL = 86_400;
 const CACHE_VERSION_KEY = 'movies:cache-version';
@@ -317,9 +317,8 @@ export default async function handler(req, res) {
     return json(res, 405, { error: 'Method not allowed' });
   }
   if (method !== 'GET' && !isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
-  // The Cloudflare catalogue edge reads this tiny, uncached version before
-  // looking up its own cache. A successful admin mutation increments the
-  // Redis version, instantly moving all catalogue requests to a fresh key.
+  // The Cloudflare catalogue edge reads this tiny version pointer before using its edge cache.
+  // Only a successful syncDB operation advances the version.
   if (method === 'GET' && req.query?.syncStatus === '1') {
     if (!isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
     try { return json(res, 200, await getCatalogueCacheStatus(), { 'Cache-Control': 'no-store, max-age=0' }); }
@@ -388,8 +387,7 @@ export default async function handler(req, res) {
         : await cached(key, load, q ? SEARCH_CACHE_TTL : CACHE_TTL);
       return json(res, 200, result.value, {
         'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED',
-        // Redis is the canonical catalogue cache; don't let Vercel's CDN
-        // retain an older response after the Redis cache version is advanced.
+        // Redis is the canonical catalogue cache; Vercel must not retain an older response.
         'Cache-Control': 'no-store, max-age=0',
       });
     }
