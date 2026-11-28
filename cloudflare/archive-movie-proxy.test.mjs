@@ -234,3 +234,25 @@ test('keeps the legacy root stream route when an Archive URL is supplied', async
     assert.equal(response.status, 206);
   } finally { env.restore(); }
 });
+
+
+test('treats an Archive range-cache miss as a non-fatal bypass, not an internal HTTP 502', async () => {
+  const env = setup({ ignoreRange: true });
+  try {
+    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v2?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
+    const response = await createFmp4CacheBlock(request);
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get('X-Range-Cache-Bypass'), 'upstream-range-unavailable');
+  } finally { env.restore(); }
+});
+
+test('treats an Archive upstream network failure as a non-fatal range-cache bypass', async () => {
+  const env = setup();
+  try {
+    globalThis.fetch = async () => { throw new Error('simulated Archive upstream outage'); };
+    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v2?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
+    const response = await createFmp4CacheBlock(request);
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get('X-Range-Cache-Bypass'), 'upstream-unavailable');
+  } finally { env.restore(); }
+});
