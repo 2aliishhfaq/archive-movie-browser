@@ -118,18 +118,26 @@ async function readActiveCatalogueSnapshot() {
 }
 
 async function getCatalogueCacheStatus() {
-  if (!redisReady()) return { configured: false, active: false, pendingChanges: false };
-  const [meta, dirty] = await redisPipeline([
-    ['GET', CATALOGUE_META_KEY],
-    ['GET', CATALOGUE_DIRTY_KEY],
-  ]);
+  if (!redisReady()) return { configured: false, active: false, pendingChanges: false, snapshotMissing: false };
+  const [state] = await redisPipeline([[
+    'EVAL',
+    "return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2]), redis.call('EXISTS', KEYS[3])}",
+    '3',
+    CATALOGUE_META_KEY,
+    CATALOGUE_DIRTY_KEY,
+    CATALOGUE_ACTIVE_KEY,
+  ]]);
+  const meta = Array.isArray(state) ? state[0] : null;
+  const dirty = Array.isArray(state) ? state[1] : null;
+  const hasSnapshot = Array.isArray(state) && Number(state[2]) === 1;
   let details = {};
   if (meta) {
     try { details = JSON.parse(meta); } catch { /* Status stays readable if old metadata is malformed. */ }
   }
   return {
     configured: true,
-    active: Boolean(details.version),
+    active: Boolean(details.version) && hasSnapshot,
+    snapshotMissing: Boolean(details.version) && !hasSnapshot,
     version: details.version || null,
     syncedAt: details.syncedAt || null,
     movieCount: Number(details.movieCount || 0),
