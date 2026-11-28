@@ -151,7 +151,8 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
     const workerUrl = CATALOG_EDGE_URL + '/hls?url=' + encodeURIComponent(source);
     const playbackUrl = directArchive ? source : workerUrl;
     const failed = () => {
-      if (!directArchive && active) {
+      if (!active) return;
+      if (!directArchive) {
         setDirectArchive(true);
         return;
       }
