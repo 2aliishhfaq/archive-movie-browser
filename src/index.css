@@ -711,3 +711,12 @@
   .browse-tools{display:block}
   .browse-tools .search-box{width:100%;max-width:none}
 }
+
+/* Multiple episode sources stay grouped beneath one poster/player. */
+.episode-tabs{display:flex;gap:8px;overflow-x:auto;padding:12px 18px;background:#111;border-bottom:1px solid #343430;scrollbar-width:thin}
+.episode-tab{flex:0 0 auto;min-height:38px;padding:0 16px;border:1px solid #45453f;background:#1b1b19;color:#c9c7bf;font:10px 'DM Mono',monospace;letter-spacing:.04em;cursor:pointer}
+.episode-tab.active{background:#d9e75d;border-color:#d9e75d;color:#111;font-weight:700}
+.episode-tab:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.admin-form textarea.episode-json-input{width:100%;min-height:180px;resize:vertical;background:#101010;border:1px solid #393936;color:#eeeae2;padding:14px;outline:none;font:12px/1.65 'DM Mono',monospace;letter-spacing:0;tab-size:2}
+.admin-form textarea.episode-json-input:focus{border-color:#d9e75d}
+@media(max-width:650px){.episode-tabs{padding:10px;gap:6px}.episode-tab{min-height:36px;padding:0 12px}.episode-json-input{font-size:11px}}
