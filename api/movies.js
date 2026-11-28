@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
+import { validateArchiveVideoUrl } from '../src/services/archiveValidation.js';
 
 // Stable versioned catalogue entries stay warm for 10 years; mutations rotate the namespace.
 const CACHE_TTL = 315_360_000;
@@ -285,6 +286,9 @@ export default async function handler(req, res) {
       if (body.action === 'import') return await importArchiveMovies(body, sql, res);
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
+      const validation = await validateArchiveVideoUrl(movie.movie_link);
+      if (!validation.ok) return json(res, 422, { error: validation.error, validation: 'archive_video' });
+      movie.movie_link = validation.movieLink;
       const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link) VALUES (${movie.movie_name}, ${movie.category}, ${movie.poster}, ${movie.movie_link}) RETURNING id, movie_name, category, poster, movie_link`;
       await invalidateCache();
       return json(res, 201, { movie: rows[0] });
@@ -294,6 +298,9 @@ export default async function handler(req, res) {
     if (method === 'PUT') {
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
+      const validation = await validateArchiveVideoUrl(movie.movie_link);
+      if (!validation.ok) return json(res, 422, { error: validation.error, validation: 'archive_video' });
+      movie.movie_link = validation.movieLink;
       const rows = await sql`UPDATE public.movies SET movie_name = ${movie.movie_name}, category = ${movie.category}, poster = ${movie.poster}, movie_link = ${movie.movie_link}
         WHERE id = ${String(body.id)}
           AND (movie_name IS DISTINCT FROM ${movie.movie_name}
