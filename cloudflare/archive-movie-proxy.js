@@ -342,7 +342,7 @@ const MAX_HLS_PLAYLIST_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const HLS_SEGMENT_TTL = 3600;
 const HLS_PLAYLIST_TTL = 60;
-const FMP4_RANGE_CHUNK_BYTES = 8 * 1024 * 1024;
+const FMP4_RANGE_CHUNK_BYTES = 2 * 1024 * 1024;
 const FMP4_RANGE_CACHE_TTL = 3600;
 const FMP4_MAX_CACHEABLE_RANGE_BYTES = 32 * 1024 * 1024;
 
@@ -634,7 +634,7 @@ export async function createFmp4CacheBlock(request) {
 
 async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
   try {
-    const blockUrl = new URL("/__fmp4_cache_block", request.url);
+    const blockUrl = new URL("/__fmp4_cache_block_v2", request.url);
     blockUrl.searchParams.set("url", target.toString());
     blockUrl.searchParams.set("start", String(chunkStart));
     const blockRequest = new Request(blockUrl.toString(), { method: "GET" });

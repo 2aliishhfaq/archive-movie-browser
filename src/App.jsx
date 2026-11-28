@@ -233,7 +233,7 @@ function ArchiveVideoPlayer({ source, poster, onPlaybackError }) {
     onPlaybackError?.();
   };
 
-  return <video ref={videoRef} controls autoPlay playsInline preload="metadata" poster={poster || undefined} onError={handleError}>
+  return <video ref={videoRef} controls autoPlay playsInline preload="auto" poster={poster || undefined} onError={handleError}>
     <source src={directArchive ? source : proxySource} type="video/mp4" />
     <a href={source}>Open video source</a>
   </video>;
