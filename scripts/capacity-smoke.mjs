@@ -6,7 +6,14 @@ const concurrency = Number(process.env.CONCURRENCY || 5);
 const requests = Number(process.env.REQUESTS || 40);
 if (!base) throw new Error('Set BASE_URL to a Vercel preview deployment.');
 const origin = new URL(base);
-if (origin.protocol !== 'https:' || origin.hostname === 'reelboxe.vercel.app') throw new Error('Safety stop: BASE_URL must be an HTTPS preview host, never production.');
+const productionHosts = new Set([
+  'reelboxe.vercel.app',
+  'reelbox-git-main-reelbox.vercel.app',
+  'reelbox-2rgdrn7iy-reelbox.vercel.app',
+  ...(process.env.PRODUCTION_HOSTS || '').split(',').map(host => host.trim().toLowerCase()).filter(Boolean),
+]);
+if (origin.protocol !== 'https:' || origin.username || origin.password || origin.port) throw new Error('Safety stop: BASE_URL must be a plain HTTPS preview URL.');
+if (productionHosts.has(origin.hostname.toLowerCase()) || origin.hostname.toLowerCase().includes('-git-main-')) throw new Error('Safety stop: BASE_URL resolves to a production or main-branch deployment, not a preview.');
 if (!origin.hostname.endsWith('.vercel.app')) throw new Error('Safety stop: BASE_URL must be a Vercel preview deployment host.');
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 10) throw new Error('CONCURRENCY must be between 1 and 10.');
 if (!Number.isInteger(requests) || requests < 1 || requests > 100) throw new Error('REQUESTS must be between 1 and 100.');
@@ -24,7 +31,7 @@ let next = 0;
 const started = performance.now();
 async function worker() {
   while (next < requests) {
-    const target = targets[next++ % targets.length];
+    const target = targets[next++];
     const begin = performance.now();
     try {
       const response = await fetch(target.url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
