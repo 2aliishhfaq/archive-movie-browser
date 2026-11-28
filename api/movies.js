@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
-import { validateArchiveVideoUrl } from './archiveValidation.js';
+import { validateArchiveVideoUrl } from '../src/services/archiveValidation.js';
 
 // Stable versioned catalogue entries stay warm for 10 years; mutations rotate the namespace.
 const CACHE_TTL = 315_360_000;
