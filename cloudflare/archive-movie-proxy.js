@@ -605,7 +605,7 @@ export async function createFmp4CacheBlock(request) {
   const upstreamHeaders = new Headers({ Range: "bytes=" + chunkStart + "-" + chunkEnd, "Accept-Encoding": "identity" });
   let fetched;
   try { fetched = await fetchArchiveResource(target, { method: "GET", headers: upstreamHeaders }); } catch {
-    return new Response("Archive byte block unavailable", { status: 502, headers: { "Cache-Control": "no-store" } });
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "X-Range-Cache-Bypass": "upstream-unavailable" } });
   }
   const upstream = fetched.response;
   const range = parseContentRange(upstream.headers.get("Content-Range"));
@@ -615,7 +615,7 @@ export async function createFmp4CacheBlock(request) {
   const isMp4 = rawType === "video/mp4" || (rawType === "application/octet-stream" && pathIsMp4);
   if (upstream.status !== 206 || !range || range.start !== chunkStart || range.end !== expectedEnd || !isMp4 || upstream.headers.has("Set-Cookie")) {
     try { await upstream.body?.cancel(); } catch {}
-    return new Response("Archive origin did not honour the aligned MP4 byte range", { status: 502, headers: { "Cache-Control": "no-store" } });
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "X-Range-Cache-Bypass": "upstream-range-unavailable" } });
   }
   const headers = new Headers({
     "Content-Type": "video/mp4",
