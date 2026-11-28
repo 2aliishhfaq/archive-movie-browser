@@ -805,7 +805,7 @@ function AdminPanel() {
         <h1>Bring films<br/><em>into the archive.</em></h1>
         <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
         <section className="dashboard-section" id="movie-editor">
-          <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Paste an Internet Archive video URL. Published movies appear in the public catalog.</p></div>
+          <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Paste an Internet Archive video URL. We verify the item and playable video file before publishing it to the public catalog.</p></div>
           <form className="admin-form" onSubmit={publishMovie}>
             <label>MOVIE TITLE<input value={manualMovie.movie_name} onChange={e => setManualMovie({...manualMovie, movie_name:e.target.value})} placeholder="Movie title" maxLength={240} required /></label>
             <div className="admin-fields">
