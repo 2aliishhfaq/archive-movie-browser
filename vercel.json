@@ -26,6 +26,10 @@
         {
           "key": "Strict-Transport-Security",
           "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow, noarchive, nosnippet"
         }
       ]
     }
@@ -38,6 +42,19 @@
     {
       "source": "/admin/",
       "destination": "/index.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/:path*",
+      "missing": [
+        {
+          "type": "host",
+          "value": "reelboxe.vercel.app"
+        }
+      ],
+      "destination": "https://reelboxe.vercel.app/:path*",
+      "permanent": false
     }
   ]
 }
