@@ -80,9 +80,8 @@ export async function validateArchiveVideoUrl(value, fetchImpl = fetch) {
   try { metadata = await response.json(); } catch {
     return { ok: false, error: 'Internet Archive returned invalid item metadata.' };
   }
-  if (metadata?.metadata?.mediatype && metadata.metadata.mediatype !== 'movies' && metadata.metadata.mediatype !== 'video') {
-    return { ok: false, error: 'This Archive.org item is not a video item.' };
-  }
+  // Archive.org user uploads can be tagged mediatype=data even when they contain video.
+  // The presence of a non-empty, supported video file is the reliable compatibility signal.
   const file = choosePlayableArchiveFile(metadata.files, parsed.filename);
   if (!file) {
     return { ok: false, error: parsed.filename
