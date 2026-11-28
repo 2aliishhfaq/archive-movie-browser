@@ -38,12 +38,16 @@ test('preserves an explicitly selected playable file and canonicalizes encoded p
   assert.equal(result.movieLink, 'https://archive.org/download/test-film/feature.webm');
 });
 
-test('rejects missing, empty, unsupported, and non-video items', async () => {
+test('rejects missing, empty, and unsupported files but accepts video files in data items', async () => {
   const mock = mockFetch({ payload: metadata });
   assert.equal((await validateArchiveVideoUrl('https://archive.org/download/test-film/missing.mp4', mock.fetchImpl)).ok, false);
   assert.equal((await validateArchiveVideoUrl('https://archive.org/download/test-film/empty.mp4', mock.fetchImpl)).ok, false);
-  const noVideo = mockFetch({ payload: { metadata: { mediatype: 'texts' }, files: metadata.files } });
-  assert.match((await validateArchiveVideoUrl('https://archive.org/details/test-film', noVideo.fetchImpl)).error, /not a video/i);
+  const dataItem = mockFetch({ payload: { metadata: { mediatype: 'data' }, files: [{ name: 'f&f062013.mp4', size: '1505656638', source: 'original' }] } });
+  const accepted = await validateArchiveVideoUrl('https://archive.org/download/ff062013-2026/f%26f062013.mp4', dataItem.fetchImpl);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.movieLink, 'https://archive.org/download/ff062013-2026/f%26f062013.mp4');
+  const noVideo = mockFetch({ payload: { metadata: { mediatype: 'texts' }, files: [{ name: 'book.pdf', size: '12000' }] } });
+  assert.match((await validateArchiveVideoUrl('https://archive.org/details/test-film', noVideo.fetchImpl)).error, /no non-empty browser-compatible video/i);
 });
 
 test('rejects lookalike hosts, insecure URLs, and unsafe item identifiers', async () => {
