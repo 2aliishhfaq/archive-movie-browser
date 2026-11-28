@@ -797,17 +797,23 @@ async function handleStreamProxy(request, ctx) {
   });
 }
 
+function healthResponse() {
+  return Response.json({
+    ok: true, service: "archive-movie-proxy", status: "ready",
+    catalogueCache: true, archiveFallback: true,
+    rangeStreaming: true, fmp4RangeCache: true, rangeChunkBytes: FMP4_RANGE_CHUNK_BYTES, hlsProxy: true, secureArchiveAllowlist: true
+  }, { headers: jsonHeaders });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
-    if (url.pathname === "/health" && request.method === "GET") {
-      return Response.json({
-        ok: true, service: "archive-movie-proxy", status: "ready",
-        catalogueCache: true, archiveFallback: true,
-        rangeStreaming: true, fmp4RangeCache: true, rangeChunkBytes: FMP4_RANGE_CHUNK_BYTES, hlsProxy: true, secureArchiveAllowlist: true
-      }, { headers: jsonHeaders });
+    if ((url.pathname === "/health" || url.pathname === "/") && ["GET", "HEAD"].includes(request.method) &&
+        (url.pathname === "/health" || !url.searchParams.has("url"))) {
+      const health = healthResponse();
+      return request.method === "HEAD" ? new Response(null, { status: 200, headers: health.headers }) : health;
     }
     if (url.pathname === "/catalog") return handleCatalog(request, ctx);
     if (url.pathname === "/hls") return handleHls(request, ctx);
