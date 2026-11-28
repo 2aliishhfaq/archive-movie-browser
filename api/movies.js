@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
 import { validateArchiveVideoUrl } from '../src/services/archiveValidation.js';
+import { buildCatalogueResponse } from '../src/services/catalogueSnapshot.js';
 
 // Stable versioned catalogue entries stay warm for 10 years; mutations rotate the namespace.
 const CACHE_TTL = 315_360_000;
@@ -301,7 +302,7 @@ async function importArchiveMovies(body, sql, res) {
       importedCount: imported.length,
       skippedCount,
       totalFound: docs.length,
-      message: imported.length ? 'Internet Archive films imported successfully.' : 'No new playable films were imported. Existing records and unsupported formats were skipped.',
+      message: imported.length ? 'Internet Archive films saved in Neon. Run syncDB to publish them to the public catalogue.' : 'No new playable films were imported. Existing records and unsupported formats were skipped.',
     });
   } catch (error) {
     console.error('archive-import-failed', error.message);
@@ -349,31 +350,19 @@ export default async function handler(req, res) {
       if (!adminView) {
         const state = await readActiveCatalogueSnapshot();
         if (state.active) {
-          const movies = state.snapshot.movies;
-          if (id !== undefined) {
-            const movie = validId(id) ? movies.find(item => String(item.id) === String(id)) || null : null;
-            return json(res, 200, { movie }, { 'X-Cache': 'SNAPSHOT-HIT', 'X-Movies-Cache-Version': state.snapshot.version, 'Cache-Control': 'no-store, max-age=0' });
-          }
-          if (req.query?.categories === '1') {
-            const values = new Map();
-            for (const movie of movies) {
-              const value = typeof movie.category === 'string' ? movie.category.trim().replace(/\\s+/g, ' ') : '';
-              if (value) {
-                const normalized = value.toLowerCase();
-                if (!values.has(normalized)) values.set(normalized, value);
-              }
-            }
-            const categories = [...values.values()].sort((a, b) => a.localeCompare(b));
-            return json(res, 200, { categories }, { 'X-Cache': 'SNAPSHOT-HIT', 'X-Movies-Cache-Version': state.snapshot.version, 'Cache-Control': 'no-store, max-age=0' });
-          }
-          const normalizedCategory = category.trim().replace(/\\s+/g, ' ').toLowerCase();
-          const search = q.toLowerCase();
-          const filtered = movies.filter(movie =>
-            (!search || String(movie.movie_name || '').toLowerCase().includes(search)) &&
-            (!normalizedCategory || String(movie.category || '').trim().replace(/\\s+/g, ' ').toLowerCase() === normalizedCategory)
-          );
-          const result = { movies: filtered.slice(offset, offset + limit), total: filtered.length, limit, offset };
-          return json(res, 200, result, { 'X-Cache': 'SNAPSHOT-HIT', 'X-Movies-Cache-Version': state.snapshot.version, 'Cache-Control': 'no-store, max-age=0' });
+          const result = buildCatalogueResponse(state.snapshot, {
+            id,
+            q,
+            category,
+            limit,
+            offset,
+            categoriesOnly: req.query?.categories === '1',
+          });
+          return json(res, 200, result, {
+            'X-Cache': 'SNAPSHOT-HIT',
+            'X-Movies-Cache-Version': state.snapshot.version,
+            'Cache-Control': 'no-store, max-age=0',
+          });
         }
       }
 
