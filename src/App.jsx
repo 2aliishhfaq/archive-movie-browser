@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getArchiveStreamUrl, isFmp4FileName } from './services/archiveStream.js';
 import { normalizeMovieCategories } from './services/movieCategories.js';
+import { readCachedCatalogue, writeCachedCatalogue, readCachedCategories, writeCachedCategories } from './services/catalogueResilience.js';
 
 const imageFallback = 'https://placehold.co/480x720/171717/f5f5f5?text=No+Poster';
 const INSTALL_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -70,7 +71,9 @@ async function fetchCategoryOptions(signal) {
     });
     if (response.ok) {
       const data = await response.json();
-      return normalizeMovieCategories(data.categories);
+      const categories = normalizeMovieCategories(data.categories);
+      writeCachedCategories(categories);
+      return categories;
     }
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -85,13 +88,15 @@ async function fetchCategoryOptions(signal) {
     });
     if (response.ok) {
       const data = await response.json();
-      return normalizeMovieCategories(data.categories);
+      const categories = normalizeMovieCategories(data.categories);
+      writeCachedCategories(categories);
+      return categories;
     }
   } catch (error) {
     if (signal?.aborted) throw error;
   }
 
-  return [];
+  return readCachedCategories();
 }
 
 function makeArchiveDownloadUrl(identifier, filename) {
@@ -379,8 +384,10 @@ async function fetchCatalogData(searchParams) {
       signal: AbortSignal.timeout(7000),
     });
     if (response.ok) {
+      const data = await response.json();
+      writeCachedCatalogue(searchParams, data);
       return {
-        data: await response.json(),
+        data,
         cache: response.headers.get('X-Cache') || response.headers.get('X-Edge-Cache') || 'EDGE',
       };
     }
@@ -395,14 +402,24 @@ async function fetchCatalogData(searchParams) {
     });
     if (response.ok) {
       const data = await response.json();
+      const catalogue = data.movies ? { ...data, movies: data.movies.map(movie => ({ ...movie, direct_archive: true })) } : data;
+      writeCachedCatalogue(searchParams, catalogue);
       return {
-        data: data.movies ? { ...data, movies: data.movies.map(movie => ({ ...movie, direct_archive: true })) } : data,
+        data: catalogue,
         cache: 'VERCEL-DIRECT',
       };
     }
   } catch { /* Vercel Hobby limits/outages fall through to Archive.org. */ }
 
-  return fetchArchiveCatalog(searchParams);
+  try {
+    const fallback = await fetchArchiveCatalog(searchParams);
+    writeCachedCatalogue(searchParams, fallback.data);
+    return fallback;
+  } catch (error) {
+    const stale = readCachedCatalogue(searchParams);
+    if (stale) return { data: stale, cache: 'LOCAL-STALE' };
+    throw error;
+  }
 }
 
 function MovieBrowser() {

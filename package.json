@@ -13,7 +13,8 @@
     "contributors": "node scripts/contributors.mjs",
     "stations": "node scripts/build-stations.mjs",
     "lint": "eslint .",
-    "test:stream": "node --test src/services/archiveStream.test.js cloudflare/archive-movie-proxy.test.mjs cloudflare/catalog-cache-version.test.mjs"
+    "test:stream": "node --test src/services/archiveStream.test.js cloudflare/archive-movie-proxy.test.mjs cloudflare/catalog-cache-version.test.mjs",
+    "test:capacity": "node scripts/capacity-smoke.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
