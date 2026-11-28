@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { createFmp4CacheBlock } from './archive-movie-proxy.js';
 
-const CHUNK = 8 * 1024 * 1024;
+const CHUNK = 2 * 1024 * 1024;
 const TOTAL = CHUNK * 2 + 100;
 const ARCHIVE_URL = 'https://archive.org/download/test-film/film.ia.mp4';
 const PROXY_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev/stream?url=' + encodeURIComponent(ARCHIVE_URL);
@@ -85,7 +85,7 @@ function setup({ ignoreRange = false } = {}) {
   return { request, upstreamCalls, entries, flushCache, restore };
 }
 
-test('returns exact 206 bytes while caching the aligned first 8 MiB MP4 block', async () => {
+test('returns exact 206 bytes while caching the aligned first 2 MiB MP4 block', async () => {
   const env = setup();
   try {
     const response = await env.request('bytes=12-31');
@@ -100,10 +100,11 @@ test('returns exact 206 bytes while caching the aligned first 8 MiB MP4 block', 
     assert.equal(env.upstreamCalls.length, 1);
     assert.equal(env.upstreamCalls[0].range, 'bytes=0-' + (CHUNK - 1));
     assert.equal(env.entries.size, 1);
+    assert.match([...env.entries.keys()][0], /__fmp4_cache_block_v2/);
   } finally { env.restore(); }
 });
 
-test('serves a second seek inside the same 8 MiB block from edge cache', async () => {
+test('serves a second seek inside the same 2 MiB block from edge cache', async () => {
   const env = setup();
   try {
     const first = await env.request('bytes=100-119');
@@ -140,7 +141,7 @@ test('streams a range spanning two aligned chunks without changing the requested
   } finally { env.restore(); }
 });
 
-test('streams an open-ended browser range as a truthful full 206 while fetching only aligned 8 MiB blocks', async () => {
+test('streams an open-ended browser range as a truthful full 206 while fetching only aligned 2 MiB blocks', async () => {
   const originalFixedLengthStream = globalThis.FixedLengthStream;
   globalThis.FixedLengthStream = class extends TransformStream {
     constructor(expectedBytes) {
