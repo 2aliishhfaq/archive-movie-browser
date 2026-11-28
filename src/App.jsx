@@ -61,7 +61,7 @@ function announceMovieChange() {
 }
 
 async function fetchCategoryOptions(signal) {
-  // The Worker checks the authoritative mutation version, then serves the matching
+  // The Worker checks the authoritative sync version, then serves the matching
   // long-lived edge entry. This avoids a Vercel/Redis round trip on routine page loads.
   try {
     const response = await fetch(CATALOG_EDGE_URL + '/catalog?categories=1', {
@@ -881,7 +881,7 @@ function AdminPanel() {
           <div className="admin-stats">
             <div><strong>{cacheStatus?.active ? cacheStatus.movieCount : '—'}</strong><span>CACHED MOVIES</span></div>
             <div><strong>{cacheStatus?.active ? 'ACTIVE' : 'NOT SYNCED'}</strong><span>SNAPSHOT</span></div>
-            <div><strong>{cacheStatus?.pendingChanges ? 'YES' : 'NO'}</strong><span>PENDING CHANGES</span></div>
+            <div><strong>{cacheStatus ? (cacheStatus.pendingChanges ? 'YES' : 'NO') : '—'}</strong><span>PENDING CHANGES</span></div>
           </div>
           <p className="admin-security">{cacheStatus?.syncedAt ? 'Last successful sync: ' + new Date(cacheStatus.syncedAt).toLocaleString() : 'No manual snapshot has been created yet. Run the first sync to publish the current Neon catalogue.'}</p>
           {cacheStatus?.bytes ? <p className="admin-security">Snapshot size: {(cacheStatus.bytes / 1024).toFixed(1)} KB · Version {cacheStatus.version}</p> : null}
