@@ -50,7 +50,6 @@
       "missing": [
         {
           "type": "host",
-          "key": "host",
           "value": "reelboxe.vercel.app"
         }
       ],
