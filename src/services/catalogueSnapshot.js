@@ -1,5 +1,5 @@
 function normalizeCategory(value) {
-  return String(value || '').trim().replace(/\\s+/g, ' ').toLowerCase();
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 export function buildCatalogueResponse(snapshot, options = {}) {
@@ -7,7 +7,7 @@ export function buildCatalogueResponse(snapshot, options = {}) {
   const { id, q = '', category = '', limit = 24, offset = 0, categoriesOnly = false } = options;
 
   if (id !== undefined) {
-    const movie = /^\\d{1,18}$/.test(String(id))
+    const movie = /^\d{1,18}$/.test(String(id))
       ? movies.find(item => String(item.id) === String(id)) || null
       : null;
     return { movie };
@@ -16,7 +16,7 @@ export function buildCatalogueResponse(snapshot, options = {}) {
   if (categoriesOnly) {
     const categories = new Map();
     for (const movie of movies) {
-      const value = typeof movie.category === 'string' ? movie.category.trim().replace(/\\s+/g, ' ') : '';
+      const value = typeof movie.category === 'string' ? movie.category.trim().replace(/\s+/g, ' ') : '';
       const normalized = normalizeCategory(value);
       if (normalized && !categories.has(normalized)) categories.set(normalized, value);
     }
