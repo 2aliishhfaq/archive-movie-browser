@@ -1,5 +1,6 @@
 export const ARCHIVE_STREAM_PROXY = 'https://archive-movie-proxy.2aliishhfaq.workers.dev';
-export const FMP4_RANGE_CHUNK_BYTES = 2 * 1024 * 1024;
+export const FMP4_FIRST_CHUNK_BYTES = 1 * 1024 * 1024;
+export const FMP4_RANGE_CHUNK_BYTES = 8 * 1024 * 1024;
 
 const ARCHIVE_HOST = host => host === 'archive.org' || host.endsWith('.archive.org');
 const FMP4_EXTENSION = /\.(?:mp4|m4v|mpeg4)$/i;
