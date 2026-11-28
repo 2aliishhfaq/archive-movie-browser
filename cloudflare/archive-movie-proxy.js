@@ -2,7 +2,7 @@ const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type,Range,If-Range,If-None-Match,If-Modified-Since",
-  "Access-Control-Expose-Headers": "Content-Length,Content-Range,Accept-Ranges,ETag,Last-Modified,Content-Disposition,X-Cache,X-Data-Source,X-Origin-Cache,X-Stream-Proxy,X-Range-Cache,X-Range-Chunk-Bytes"
+  "Access-Control-Expose-Headers": "Content-Length,Content-Range,Accept-Ranges,ETag,Last-Modified,Content-Disposition,X-Cache,X-Data-Source,X-Origin-Cache,X-Stream-Proxy,X-Range-Cache,X-Range-Chunk-Bytes,X-Range-First-Chunk-Bytes"
 };
 const allowed = host => host === "archive.org" || host.endsWith(".archive.org");
 const jsonHeaders = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
@@ -342,7 +342,8 @@ const MAX_HLS_PLAYLIST_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const HLS_SEGMENT_TTL = 3600;
 const HLS_PLAYLIST_TTL = 60;
-const FMP4_RANGE_CHUNK_BYTES = 2 * 1024 * 1024;
+const FMP4_FIRST_CHUNK_BYTES = 1 * 1024 * 1024;
+const FMP4_RANGE_CHUNK_BYTES = 8 * 1024 * 1024;
 const FMP4_RANGE_CACHE_TTL = 3600;
 const FMP4_MAX_CACHEABLE_RANGE_BYTES = 32 * 1024 * 1024;
 
@@ -598,10 +599,11 @@ export async function createFmp4CacheBlock(request) {
   try { target = new URL(raw); } catch { return new Response("Invalid Archive source", { status: 400, headers: { "Cache-Control": "no-store" } }); }
   if (!isAllowedArchiveUrl(target)) return new Response("Archive host is not allowed", { status: 403, headers: { "Cache-Control": "no-store" } });
   const chunkStart = Number(url.searchParams.get("start"));
-  if (!Number.isSafeInteger(chunkStart) || chunkStart < 0 || chunkStart % FMP4_RANGE_CHUNK_BYTES !== 0) {
+  if (!Number.isSafeInteger(chunkStart) || chunkStart < 0 || (chunkStart === 0 ? false : chunkStart < FMP4_FIRST_CHUNK_BYTES || (chunkStart - FMP4_FIRST_CHUNK_BYTES) % FMP4_RANGE_CHUNK_BYTES !== 0)) {
     return new Response("Invalid aligned byte block", { status: 400, headers: { "Cache-Control": "no-store" } });
   }
-  const chunkEnd = chunkStart + FMP4_RANGE_CHUNK_BYTES - 1;
+  const chunkBytes = chunkStart === 0 ? FMP4_FIRST_CHUNK_BYTES : FMP4_RANGE_CHUNK_BYTES;
+  const chunkEnd = chunkStart + chunkBytes - 1;
   const upstreamHeaders = new Headers({ Range: "bytes=" + chunkStart + "-" + chunkEnd, "Accept-Encoding": "identity" });
   let fetched;
   try { fetched = await fetchArchiveResource(target, { method: "GET", headers: upstreamHeaders }); } catch {
@@ -634,7 +636,7 @@ export async function createFmp4CacheBlock(request) {
 
 async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
   try {
-    const blockUrl = new URL("/__fmp4_cache_block_v2", request.url);
+    const blockUrl = new URL("/__fmp4_cache_block_v3", request.url);
     blockUrl.searchParams.set("url", target.toString());
     blockUrl.searchParams.set("start", String(chunkStart));
     const blockRequest = new Request(blockUrl.toString(), { method: "GET" });
@@ -642,7 +644,7 @@ async function loadFmp4RangeBlock(request, target, ctx, chunkStart) {
     if (response.status !== 200) { try { await response.body?.cancel(); } catch {} return null; }
     const total = Number(response.headers.get("X-Range-Total"));
     const length = Number(response.headers.get("X-Range-Chunk-Length") || response.headers.get("Content-Length"));
-    if (!Number.isSafeInteger(total) || total <= chunkStart || !Number.isSafeInteger(length) || length < 1 || length > FMP4_RANGE_CHUNK_BYTES) {
+    if (!Number.isSafeInteger(total) || total <= chunkStart || !Number.isSafeInteger(length) || length < 1 || length > (chunkStart === 0 ? FMP4_FIRST_CHUNK_BYTES : FMP4_RANGE_CHUNK_BYTES)) {
       try { await response.body?.cancel(); } catch {}
       return null;
     }
@@ -665,7 +667,9 @@ function fmp4RangeBody(request, target, ctx, firstBlock, start, end) {
     async pull(controller) {
       try {
         if (cursor > end) { controller.close(); return; }
-        const chunkStart = Math.floor(cursor / FMP4_RANGE_CHUNK_BYTES) * FMP4_RANGE_CHUNK_BYTES;
+        const chunkStart = cursor < FMP4_FIRST_CHUNK_BYTES
+          ? 0
+          : FMP4_FIRST_CHUNK_BYTES + Math.floor((cursor - FMP4_FIRST_CHUNK_BYTES) / FMP4_RANGE_CHUNK_BYTES) * FMP4_RANGE_CHUNK_BYTES;
         const block = nextBlock && nextBlock.chunkStart === chunkStart
           ? nextBlock
           : await loadFmp4RangeBlock(request, target, ctx, chunkStart);
@@ -690,7 +694,9 @@ async function handleFmp4Range(request, target, ctx) {
   const requested = parseExplicitByteRange(request.headers.get("Range"));
   if (!requested || new URL(request.url).searchParams.get("download") === "1") return null;
 
-  const firstChunkStart = Math.floor(requested.start / FMP4_RANGE_CHUNK_BYTES) * FMP4_RANGE_CHUNK_BYTES;
+  const firstChunkStart = requested.start < FMP4_FIRST_CHUNK_BYTES
+    ? 0
+    : FMP4_FIRST_CHUNK_BYTES + Math.floor((requested.start - FMP4_FIRST_CHUNK_BYTES) / FMP4_RANGE_CHUNK_BYTES) * FMP4_RANGE_CHUNK_BYTES;
   const firstBlock = await loadFmp4RangeBlock(request, target, ctx, firstChunkStart);
   if (!firstBlock) return null;
 
@@ -716,7 +722,7 @@ async function handleFmp4Range(request, target, ctx) {
   }
 
   // For open-ended browser ranges, advertise the full remaining representation.
-  // The response body still pulls aligned 8 MiB blocks on demand and streams them.
+  // The response body pulls a 1 MiB startup block, then 8 MiB blocks on demand.
   const end = requested.end === null ? total - 1 : Math.min(requested.end, total - 1);
   const responseHeaders = new Headers({
     ...cors,
@@ -727,7 +733,8 @@ async function handleFmp4Range(request, target, ctx) {
     "Cache-Control": "private, no-store",
     "X-Stream-Proxy": "fmp4-range-cache",
     "X-Range-Cache": firstBlock.cacheStatus || "HIT",
-    "X-Range-Chunk-Bytes": String(FMP4_RANGE_CHUNK_BYTES)
+    "X-Range-Chunk-Bytes": String(FMP4_RANGE_CHUNK_BYTES),
+    "X-Range-First-Chunk-Bytes": String(FMP4_FIRST_CHUNK_BYTES)
   });
   if (firstBlock.etag) responseHeaders.set("ETag", firstBlock.etag);
   if (firstBlock.lastModified) responseHeaders.set("Last-Modified", firstBlock.lastModified);
@@ -735,7 +742,7 @@ async function handleFmp4Range(request, target, ctx) {
   const responseLength = end - requested.start + 1;
   const body = fmp4RangeBody(request, target, ctx, firstBlock, requested.start, end);
   // FixedLengthStream is an identity stream: it preserves the exact HTTP length while
-  // propagating backpressure and cancellation to the 8 MiB block reader.
+  // propagating backpressure and cancellation to the on-demand block reader.
   return new Response(withFixedLengthStream(body, responseLength), {
     status: 206,
     headers: responseHeaders
@@ -801,7 +808,7 @@ function healthResponse() {
   return Response.json({
     ok: true, service: "archive-movie-proxy", status: "ready",
     catalogueCache: true, archiveFallback: true,
-    rangeStreaming: true, fmp4RangeCache: true, rangeChunkBytes: FMP4_RANGE_CHUNK_BYTES, hlsProxy: true, secureArchiveAllowlist: true
+    rangeStreaming: true, fmp4RangeCache: true, rangeChunkBytes: FMP4_RANGE_CHUNK_BYTES, firstRangeChunkBytes: FMP4_FIRST_CHUNK_BYTES, hlsProxy: true, secureArchiveAllowlist: true
   }, { headers: jsonHeaders });
 }
 

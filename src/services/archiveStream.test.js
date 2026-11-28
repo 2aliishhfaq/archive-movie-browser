@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ARCHIVE_STREAM_PROXY, FMP4_RANGE_CHUNK_BYTES, getArchiveStreamUrl, isFmp4FileName } from './archiveStream.js';
+import { ARCHIVE_STREAM_PROXY, FMP4_FIRST_CHUNK_BYTES, FMP4_RANGE_CHUNK_BYTES, getArchiveStreamUrl, isFmp4FileName } from './archiveStream.js';
 
-test('uses a two MiB byte-range chunk size', () => {
-  assert.equal(FMP4_RANGE_CHUNK_BYTES, 2 * 1024 * 1024);
+test('uses a 1 MiB startup block followed by 8 MiB byte-range blocks', () => {
+  assert.equal(FMP4_FIRST_CHUNK_BYTES, 1 * 1024 * 1024);
+  assert.equal(FMP4_RANGE_CHUNK_BYTES, 8 * 1024 * 1024);
 });
 
 test('routes Archive.org MP4 files through the range-aware stream proxy', () => {
