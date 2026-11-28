@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { readCachedCatalogue, writeCachedCatalogue, readCachedCategories, writeCachedCategories } from './catalogueResilience.js';
 function memoryStorage() {
   const values = new Map();
-  return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  return {
+    get length() { return values.size; },
+    key: index => [...values.keys()][index] ?? null,
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  };
 }
 test('stores and restores a catalogue by normalized query parameters', () => {
   const storage = memoryStorage();
@@ -27,4 +33,15 @@ test('stores categories and gracefully handles unavailable browser storage', () 
   const unavailable = { setItem() { throw new Error('quota'); }, getItem() { throw new Error('blocked'); } };
   assert.equal(writeCachedCategories(['Drama'], unavailable), false);
   assert.deepEqual(readCachedCategories(unavailable), []);
+});
+
+test('keeps only the 12 most recently saved catalogue query entries', () => {
+  const storage = memoryStorage();
+  for (let index = 0; index < 15; index += 1) {
+    writeCachedCatalogue(new URLSearchParams('q=film' + index), { movies: [], total: 0 }, storage, 1000 + index);
+  }
+  const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(key => key?.startsWith('reelbox:catalogue:v1:'));
+  assert.equal(keys.length, 12);
+  assert.equal(readCachedCatalogue(new URLSearchParams('q=film0'), storage, 2000), null);
+  assert.deepEqual(readCachedCatalogue(new URLSearchParams('q=film14'), storage, 2000), { movies: [], total: 0 });
 });
