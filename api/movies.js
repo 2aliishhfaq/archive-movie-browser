@@ -129,6 +129,24 @@ async function getCatalogueCacheStatus() {
   };
 }
 
+async function clearLegacyCatalogueCacheKeys() {
+  let cursor = '0';
+  let deleted = 0;
+  let pages = 0;
+  do {
+    const [scan] = await redisPipeline([['SCAN', cursor, 'MATCH', 'movies:v*', 'COUNT', '500']]);
+    if (!Array.isArray(scan) || scan.length < 2) break;
+    cursor = String(scan[0]);
+    const keys = Array.isArray(scan[1]) ? scan[1] : [];
+    if (keys.length) {
+      await redisPipeline([['DEL', ...keys]]);
+      deleted += keys.length;
+    }
+    pages += 1;
+  } while (cursor !== '0' && pages < 200);
+  return deleted;
+}
+
 async function syncCatalogue(sql) {
   if (!redisReady()) return { ok: false, status: 503, error: 'Redis cache is not configured. The existing catalogue cache was not changed.' };
   const lockToken = String(Date.now());
@@ -164,7 +182,10 @@ return 1`;
       version, meta
     ]]);
     if (Number(activated) !== 1) throw new Error('Catalogue snapshot activation failed');
-    return { ok: true, version, syncedAt, movieCount: rows.length, bytes };
+    let clearedLegacyKeys = 0;
+    try { clearedLegacyKeys = await clearLegacyCatalogueCacheKeys(); }
+    catch (error) { console.error('legacy-catalogue-cache-cleanup-failed', error.message); }
+    return { ok: true, version, syncedAt, movieCount: rows.length, bytes, clearedLegacyKeys };
   } finally {
     try { await redisPipeline([['DEL', CATALOGUE_SYNC_LOCK_KEY]]); }
     catch (error) { console.error('catalogue-sync-lock-release-failed', error.message); }
