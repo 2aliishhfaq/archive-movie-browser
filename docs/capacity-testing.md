@@ -6,7 +6,7 @@
 - Vercel's public catalogue API is the next read-only fallback.
 - Internet Archive search is the final live fallback.
 - Successful catalogue responses are also stored in browser local storage (per query) as a bounded last-known-good copy. If all remote catalogue sources fail, the UI can show that copy rather than an empty screen.
-- Browser cache entries are limited to 512 KiB each and expire after 30 days. Storage/quota/privacy failures are ignored; they must never break browsing.
+- Browser cache entries are limited to 256 KiB each and expire after 30 days. Storage/quota/privacy failures are ignored; they must never break browsing.
 - Video playback continues to use the existing Worker proxy first and direct Archive.org fallback when the proxy is unavailable.
 
 ## Controlled preview load test
