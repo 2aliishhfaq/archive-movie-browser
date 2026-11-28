@@ -1,8 +1,8 @@
 const CACHE_PREFIX = 'reelbox:catalogue:v1:';
 const CATEGORY_KEY = 'reelbox:categories:v1';
-const MAX_ENTRY_BYTES = 512 * 1024;
+const MAX_ENTRY_BYTES = 256 * 1024;
 const MAX_STALE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_CATALOGUE_ENTRIES = 12;
+const MAX_CATALOGUE_ENTRIES = 8;
 function getStorage(storage) { if (storage) return storage; try { return globalThis.localStorage; } catch { return null; } }
 function safeRead(key, storage) { try { const raw = getStorage(storage)?.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; } }
 function safeWrite(key, value, storage) {
