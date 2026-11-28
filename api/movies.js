@@ -1,11 +1,17 @@
 import { neon } from '@neondatabase/serverless';
 import { timingSafeEqual } from 'node:crypto';
 import { validateArchiveVideoUrl } from '../src/services/archiveValidation.js';
+import { buildCatalogueResponse } from '../src/services/catalogueSnapshot.js';
 
-// Stable versioned catalogue entries stay warm for 10 years; mutations rotate the namespace.
+// Public catalogue reads use the last manually activated Redis snapshot.
 const CACHE_TTL = 315_360_000;
 const SEARCH_CACHE_TTL = 86_400;
 const CACHE_VERSION_KEY = 'movies:cache-version';
+const CATALOGUE_ACTIVE_KEY = 'movies:catalogue:active';
+const CATALOGUE_META_KEY = 'movies:catalogue:meta';
+const CATALOGUE_DIRTY_KEY = 'movies:catalogue:dirty';
+const CATALOGUE_SYNC_LOCK_KEY = 'movies:catalogue:sync-lock';
+const MAX_CATALOGUE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const json = (res, status, body, headers = {}) => {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -83,10 +89,124 @@ async function cached(key, load, ttl = CACHE_TTL) {
     return { value: await load(), hit: false, configured: true, degraded: true };
   }
 }
-async function invalidateCache() {
+async function markCatalogueDirty() {
   if (!redisReady()) return;
-  try { await redisPipeline([['INCR', CACHE_VERSION_KEY]]); }
-  catch (error) { console.error('redis-invalidation-failed', error.message); }
+  try { await redisPipeline([['SET', CATALOGUE_DIRTY_KEY, '1']]); }
+  catch (error) { console.error('catalogue-dirty-marker-failed', error.message); }
+}
+
+async function readActiveCatalogueSnapshot() {
+  if (!redisReady()) return { configured: false, active: false };
+  const [state] = await redisPipeline([[
+    'EVAL',
+    "return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2])}",
+    '2',
+    CATALOGUE_ACTIVE_KEY,
+    CATALOGUE_META_KEY,
+  ]]);
+  const stored = Array.isArray(state) ? state[0] : null;
+  const meta = Array.isArray(state) ? state[1] : null;
+  if (!stored && meta) throw new Error('Active catalogue snapshot was evicted; refusing to expose unsynced Neon changes.');
+  if (!stored) return { configured: true, active: false };
+  let snapshot;
+  try { snapshot = JSON.parse(stored); }
+  catch { throw new Error('Catalogue snapshot is corrupt'); }
+  if (!snapshot || !Array.isArray(snapshot.movies) || !/^[0-9]{1,24}$/.test(String(snapshot.version))) {
+    throw new Error('Catalogue snapshot is invalid');
+  }
+  return { configured: true, active: true, snapshot };
+}
+
+async function getCatalogueCacheStatus() {
+  if (!redisReady()) return { configured: false, active: false, pendingChanges: false, snapshotMissing: false };
+  const [state] = await redisPipeline([[
+    'EVAL',
+    "return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2]), redis.call('EXISTS', KEYS[3])}",
+    '3',
+    CATALOGUE_META_KEY,
+    CATALOGUE_DIRTY_KEY,
+    CATALOGUE_ACTIVE_KEY,
+  ]]);
+  const meta = Array.isArray(state) ? state[0] : null;
+  const dirty = Array.isArray(state) ? state[1] : null;
+  const hasSnapshot = Array.isArray(state) && Number(state[2]) === 1;
+  let details = {};
+  if (meta) {
+    try { details = JSON.parse(meta); } catch { /* Status stays readable if old metadata is malformed. */ }
+  }
+  return {
+    configured: true,
+    active: Boolean(details.version) && hasSnapshot,
+    snapshotMissing: Boolean(details.version) && !hasSnapshot,
+    version: details.version || null,
+    syncedAt: details.syncedAt || null,
+    movieCount: Number(details.movieCount || 0),
+    bytes: Number(details.bytes || 0),
+    pendingChanges: dirty === '1',
+  };
+}
+
+async function clearLegacyCatalogueCacheKeys() {
+  let cursor = '0';
+  let deleted = 0;
+  let pages = 0;
+  do {
+    const [scan] = await redisPipeline([['SCAN', cursor, 'MATCH', 'movies:v*', 'COUNT', '500']]);
+    if (!Array.isArray(scan) || scan.length < 2) break;
+    cursor = String(scan[0]);
+    const keys = Array.isArray(scan[1]) ? scan[1] : [];
+    if (keys.length) {
+      await redisPipeline([['DEL', ...keys]]);
+      deleted += keys.length;
+    }
+    pages += 1;
+  } while (cursor !== '0' && pages < 200);
+  return deleted;
+}
+
+async function syncCatalogue(sql) {
+  if (!redisReady()) return { ok: false, status: 503, error: 'Redis cache is not configured. The existing catalogue cache was not changed.' };
+  const lockToken = String(Date.now());
+  const [lock] = await redisPipeline([['SET', CATALOGUE_SYNC_LOCK_KEY, lockToken, 'NX', 'EX', '300']]);
+  if (lock !== 'OK') return { ok: false, status: 409, error: 'A catalogue sync is already running. Please wait for it to finish.' };
+
+  try {
+    const rows = await sql`SELECT id, movie_name, category, poster, movie_link
+      FROM public.movies ORDER BY id DESC`;
+    const version = String(Date.now());
+    const syncedAt = new Date().toISOString();
+    const snapshot = { version, syncedAt, movieCount: rows.length, movies: rows };
+    const payload = JSON.stringify(snapshot);
+    const bytes = Buffer.byteLength(payload, 'utf8');
+    if (bytes > MAX_CATALOGUE_SNAPSHOT_BYTES) {
+      return { ok: false, status: 413, error: 'Catalogue snapshot is larger than the 8 MiB free-tier safety limit. The previous cache is still active.' };
+    }
+
+    const stagingKey = 'movies:catalogue:staging:' + version;
+    await redisPipeline([['SET', stagingKey, payload, 'EX', '3600']]);
+    const activateScript = `local staged = redis.call('GET', KEYS[1])
+if not staged then return redis.error_reply('staged catalogue snapshot missing') end
+redis.call('SET', KEYS[2], staged)
+redis.call('SET', KEYS[3], ARGV[1])
+redis.call('SET', KEYS[4], ARGV[2])
+redis.call('DEL', KEYS[5])
+redis.call('DEL', KEYS[1])
+return 1`;
+    const meta = JSON.stringify({ version, syncedAt, movieCount: rows.length, bytes });
+    const [activated] = await redisPipeline([[
+      'EVAL', activateScript, '5',
+      stagingKey, CATALOGUE_ACTIVE_KEY, CACHE_VERSION_KEY, CATALOGUE_META_KEY, CATALOGUE_DIRTY_KEY,
+      version, meta
+    ]]);
+    if (Number(activated) !== 1) throw new Error('Catalogue snapshot activation failed');
+    let clearedLegacyKeys = 0;
+    try { clearedLegacyKeys = await clearLegacyCatalogueCacheKeys(); }
+    catch (error) { console.error('legacy-catalogue-cache-cleanup-failed', error.message); }
+    return { ok: true, version, syncedAt, movieCount: rows.length, bytes, clearedLegacyKeys };
+  } finally {
+    try { await redisPipeline([['DEL', CATALOGUE_SYNC_LOCK_KEY]]); }
+    catch (error) { console.error('catalogue-sync-lock-release-failed', error.message); }
+  }
 }
 async function currentCacheVersion() {
   if (!redisReady()) return { version: null, cacheable: false };
@@ -214,13 +334,13 @@ async function importArchiveMovies(body, sql, res) {
 
     const imported = processed.filter(Boolean);
     const skippedCount = docs.length - imported.length;
-    if (imported.length) await invalidateCache();
+    if (imported.length) await markCatalogueDirty();
     return json(res, 200, {
       imported,
       importedCount: imported.length,
       skippedCount,
       totalFound: docs.length,
-      message: imported.length ? 'Internet Archive films imported successfully.' : 'No new playable films were imported. Existing records and unsupported formats were skipped.',
+      message: imported.length ? 'Internet Archive films saved in Neon. Run syncDB to publish them to the public catalogue.' : 'No new playable films were imported. Existing records and unsupported formats were skipped.',
     });
   } catch (error) {
     console.error('archive-import-failed', error.message);
@@ -235,9 +355,16 @@ export default async function handler(req, res) {
     return json(res, 405, { error: 'Method not allowed' });
   }
   if (method !== 'GET' && !isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
-  // The Cloudflare catalogue edge reads this tiny, uncached version before
-  // looking up its own cache. A successful admin mutation increments the
-  // Redis version, instantly moving all catalogue requests to a fresh key.
+  // The Cloudflare catalogue edge reads this tiny version pointer before using its edge cache.
+  // Only a successful syncDB operation advances the version.
+  if (method === 'GET' && req.query?.syncStatus === '1') {
+    if (!isAdmin(req)) return json(res, 401, { error: 'Admin authorization required' });
+    try { return json(res, 200, await getCatalogueCacheStatus(), { 'Cache-Control': 'no-store, max-age=0' }); }
+    catch (error) {
+      console.error('catalogue-status-failed', error.message);
+      return json(res, 503, { error: 'Catalogue cache status is temporarily unavailable.' });
+    }
+  }
   if (method === 'GET' && req.query?.cacheVersion === '1') {
     const state = await currentCacheVersion();
     return json(res, 200, state, {
@@ -257,7 +384,29 @@ export default async function handler(req, res) {
       const limit = Math.min(adminView ? 500 : 100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 24));
       const offset = Math.max(0, Number.parseInt(req.query?.offset, 10) || 0);
       const key = JSON.stringify({ id: id || null, q, category, limit, offset, categories: req.query?.categories === '1' });
-      const result = await cached((adminView ? 'admin:' : '') + key, async () => {
+      const publicCacheHeaders = !adminView && req.query?.edgeCache === '1'
+        ? { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' }
+        : { 'Cache-Control': 'no-store, max-age=0' };
+      if (!adminView) {
+        const state = await readActiveCatalogueSnapshot();
+        if (state.active) {
+          const result = buildCatalogueResponse(state.snapshot, {
+            id,
+            q,
+            category,
+            limit,
+            offset,
+            categoriesOnly: req.query?.categories === '1',
+          });
+          return json(res, 200, result, {
+            'X-Cache': 'SNAPSHOT-HIT',
+            'X-Movies-Cache-Version': state.snapshot.version,
+            ...publicCacheHeaders,
+          });
+        }
+      }
+
+      const load = async () => {
         if (id !== undefined) {
           if (!validId(id)) return { movie: null };
           const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE id = ${String(id)} LIMIT 1`;
@@ -273,16 +422,23 @@ export default async function handler(req, res) {
         const rows = await sql`SELECT id, movie_name, category, poster, movie_link FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g'))) ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`;
         const countRows = await sql`SELECT COUNT(*)::bigint AS total FROM public.movies WHERE (${q} = '' OR movie_name ILIKE ${'%' + q + '%'}) AND (${category} = '' OR LOWER(REGEXP_REPLACE(BTRIM(category), '[[:space:]]+', ' ', 'g')) = LOWER(REGEXP_REPLACE(BTRIM(${category}), '[[:space:]]+', ' ', 'g')))`;
         return { movies: rows, total: Number(countRows[0]?.total || 0), limit, offset };
-      }, q ? SEARCH_CACHE_TTL : CACHE_TTL);
+      };
+      const result = adminView
+        ? { value: await load(), hit: false, configured: false }
+        : await cached(key, load, q ? SEARCH_CACHE_TTL : CACHE_TTL);
       return json(res, 200, result.value, {
         'X-Cache': result.hit ? 'HIT' : result.degraded ? 'BYPASS-ERROR' : result.configured ? 'MISS' : 'DISABLED',
-        // Redis is the canonical catalogue cache; don't let Vercel's CDN
-        // retain an older response after the Redis cache version is advanced.
-        'Cache-Control': 'no-store, max-age=0',
+        // Only the explicit resilience URL is shared-cached by Vercel's CDN.
+        ...publicCacheHeaders,
       });
     }
     if (method === 'POST') {
       const body = await readBody(req);
+      if (body.action === 'syncDB') {
+        const result = await syncCatalogue(sql);
+        if (!result.ok) return json(res, result.status, { error: result.error });
+        return json(res, 200, { ...result, message: 'Catalogue snapshot synced successfully.' });
+      }
       if (body.action === 'import') return await importArchiveMovies(body, sql, res);
       const movie = validateMovie(body);
       if (typeof movie === 'string') return json(res, 400, { error: movie });
@@ -290,7 +446,7 @@ export default async function handler(req, res) {
       if (!validation.ok) return json(res, 422, { error: validation.error, validation: 'archive_video' });
       movie.movie_link = validation.movieLink;
       const rows = await sql`INSERT INTO public.movies (movie_name, category, poster, movie_link) VALUES (${movie.movie_name}, ${movie.category}, ${movie.poster}, ${movie.movie_link}) RETURNING id, movie_name, category, poster, movie_link`;
-      await invalidateCache();
+      await markCatalogueDirty();
       return json(res, 201, { movie: rows[0] });
     }
     const body = await readBody(req);
@@ -313,12 +469,12 @@ export default async function handler(req, res) {
         if (!existing.length) return json(res, 404, { error: 'Movie not found' });
         return json(res, 200, { movie: existing[0], unchanged: true });
       }
-      await invalidateCache();
+      await markCatalogueDirty();
       return json(res, 200, { movie: rows[0], unchanged: false });
     }
     const rows = await sql`DELETE FROM public.movies WHERE id = ${String(body.id)} RETURNING id`;
     if (!rows.length) return json(res, 404, { error: 'Movie not found' });
-    await invalidateCache();
+    await markCatalogueDirty();
     return json(res, 200, { deleted: true, id: String(rows[0].id) });
   } catch (error) {
     console.error('movies-api-error', error.message);

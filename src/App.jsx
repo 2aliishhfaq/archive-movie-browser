@@ -61,7 +61,7 @@ function announceMovieChange() {
 }
 
 async function fetchCategoryOptions(signal) {
-  // The Worker checks the authoritative mutation version, then serves the matching
+  // The Worker checks the authoritative sync version, then serves the matching
   // long-lived edge entry. This avoids a Vercel/Redis round trip on routine page loads.
   try {
     const response = await fetch(CATALOG_EDGE_URL + '/catalog?categories=1', {
@@ -76,11 +76,11 @@ async function fetchCategoryOptions(signal) {
     if (signal?.aborted) throw error;
   }
 
-  // Direct API is a resilience fallback only; its own Redis cache remains versioned.
+  // Direct API is a resilience fallback; Vercel's CDN shields Redis during Worker quota outages.
   try {
-    const response = await fetch('/api/movies?categories=1', {
+    const response = await fetch('/api/movies?categories=1&edgeCache=1', {
       headers: { Accept: 'application/json' },
-      cache: 'no-store',
+      cache: 'default',
       signal,
     });
     if (response.ok) {
@@ -140,6 +140,7 @@ function loadHlsJs() {
 function HlsVideoPlayer({ source, poster, onPlaybackError }) {
   const videoRef = useRef(null);
   const errorCallbackRef = useRef(onPlaybackError);
+  const [directArchive, setDirectArchive] = useState(false);
   errorCallbackRef.current = onPlaybackError;
 
   useEffect(() => {
@@ -147,58 +148,92 @@ function HlsVideoPlayer({ source, poster, onPlaybackError }) {
     if (!video) return undefined;
     let hls = null;
     let active = true;
-    const proxyUrl = CATALOG_EDGE_URL + '/hls?url=' + encodeURIComponent(source);
-
-    const startPlayback = async () => {
-      // Safari and some TV browsers have native HLS decoders.
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = proxyUrl;
-        video.load();
-        video.play().catch(() => {});
-        return;
-      }
-
-      const Hls = await loadHlsJs();
+    const workerUrl = CATALOG_EDGE_URL + '/hls?url=' + encodeURIComponent(source);
+    const playbackUrl = directArchive ? source : workerUrl;
+    const failed = () => {
       if (!active) return;
-      if (!Hls.isSupported()) {
-        errorCallbackRef.current?.();
+      if (!directArchive) {
+        setDirectArchive(true);
         return;
       }
-
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        capLevelToPlayerSize: true,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        backBufferLength: 30,
-      });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data?.fatal) errorCallbackRef.current?.();
-      });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-      });
-      hls.loadSource(proxyUrl);
-      hls.attachMedia(video);
+      errorCallbackRef.current?.();
     };
 
-    startPlayback().catch(() => {
-      if (active) errorCallbackRef.current?.();
-    });
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = playbackUrl;
+      video.onerror = failed;
+      video.load();
+      video.play().catch(() => {});
+    } else {
+      loadHlsJs().then(Hls => {
+        if (!active) return;
+        if (!Hls.isSupported()) { failed(); return; }
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          capLevelToPlayerSize: true,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          backBufferLength: 30,
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data?.fatal) failed();
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        hls.loadSource(playbackUrl);
+        hls.attachMedia(video);
+      }).catch(() => { if (active) failed(); });
+    }
 
     return () => {
       active = false;
+      video.onerror = null;
       if (hls) hls.destroy();
       video.pause();
       video.removeAttribute('src');
       video.load();
     };
-  }, [source]);
+  }, [source, directArchive]);
 
-  return <video ref={videoRef} controls autoPlay playsInline preload="auto" poster={poster || undefined}
-    onError={() => errorCallbackRef.current?.()} />;
+  return <video ref={videoRef} controls autoPlay playsInline preload="auto" poster={poster || undefined} />;
 }
+
+function ArchiveVideoPlayer({ source, poster, onPlaybackError }) {
+  const videoRef = useRef(null);
+  const [directArchive, setDirectArchive] = useState(false);
+  const resumeAt = useRef(0);
+  const proxySource = getArchiveStreamUrl(source);
+
+  useEffect(() => {
+    if (!directArchive) return undefined;
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const restorePlayback = () => {
+      if (resumeAt.current > 0 && Number.isFinite(video.duration)) {
+        video.currentTime = Math.min(resumeAt.current, Math.max(0, video.duration - 1));
+      }
+      video.play().catch(() => {});
+    };
+    video.addEventListener('loadedmetadata', restorePlayback, { once: true });
+    video.load();
+    return () => video.removeEventListener('loadedmetadata', restorePlayback);
+  }, [directArchive]);
+
+  const handleError = () => {
+    if (!directArchive && proxySource !== source) {
+      resumeAt.current = videoRef.current?.currentTime || 0;
+      setDirectArchive(true);
+      return;
+    }
+    onPlaybackError?.();
+  };
+
+  return <video ref={videoRef} controls autoPlay playsInline preload="metadata" poster={poster || undefined} onError={handleError}>
+    <source src={directArchive ? source : proxySource} type="video/mp4" />
+    <a href={source}>Open video source</a>
+  </video>;
+}
+
 
 function getArchiveItemIdentifier(source) {
   try {
@@ -352,7 +387,9 @@ async function fetchCatalogData(searchParams) {
   } catch { /* Cloudflare quota/network failures fall through to Vercel, then Archive.org. */ }
 
   try {
-    const response = await fetch('/api/movies' + (query ? '?' + query : ''), {
+    const directParams = new URLSearchParams(searchParams);
+    directParams.set('edgeCache', '1');
+    const response = await fetch('/api/movies?' + directParams.toString(), {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(7000),
     });
@@ -621,10 +658,8 @@ function MovieBrowser() {
             ? isHlsSource(activeVideoSource)
               ? <HlsVideoPlayer key={activeVideoSource} source={activeVideoSource} poster={selected.poster}
                   onPlaybackError={() => setPlayback(current => ({ ...current, status: 'fallback', sources: [], index: 0 }))} />
-              : <video key={activeVideoSource} controls autoPlay playsInline preload="metadata" poster={selected.poster || undefined} onError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })}>
-                  <source src={getArchiveStreamUrl(activeVideoSource)} type="video/mp4" />
-                  <a href={activeVideoSource}>Open video source</a>
-                </video>
+              : <ArchiveVideoPlayer key={activeVideoSource} source={activeVideoSource} poster={selected.poster}
+                  onPlaybackError={() => setPlayback(current => current.index + 1 < current.sources.length ? { ...current, index: current.index + 1 } : { ...current, status: 'fallback', sources: [], index: 0 })} />
             : archivePlayerUrl
               ? <iframe key={archivePlayerUrl} title={selected.movie_name + ' — Internet Archive fallback player'} src={archivePlayerUrl} width="640" height="480" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen loading="eager" referrerPolicy="strict-origin-when-cross-origin" />
               : <div className="player-unavailable"><strong>No browser-compatible video file was found.</strong><a href={selected.movie_link} target="_blank" rel="noreferrer">Open the Archive source</a></div>}
@@ -652,12 +687,47 @@ function AdminPanel() {
   const [editingId, setEditingId] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
   const [availableCategories, setAvailableCategories] = useState([]);
+  const [cacheStatus, setCacheStatus] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
     fetchCategoryOptions(controller.signal).then(setAvailableCategories).catch(() => {});
     return () => controller.abort();
   }, []);
+
+  async function loadCacheStatus(authToken = token) {
+    if (!authToken.trim()) return;
+    try {
+      const response = await fetch('/api/movies?syncStatus=1', { headers: { Authorization: 'Bearer ' + authToken.trim() }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load cache status.');
+      setCacheStatus(data);
+    } catch (err) { setSyncMessage(err.message || 'Cache status is unavailable.'); }
+  }
+
+  async function syncDatabase() {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    setSyncMessage('');
+    try {
+      const response = await fetch('/api/movies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() },
+        body: JSON.stringify({ action: 'syncDB' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Database sync failed.');
+      setCacheStatus({ configured: true, active: true, pendingChanges: false, version: data.version, syncedAt: data.syncedAt, movieCount: data.movieCount, bytes: data.bytes });
+      setSyncMessage(`Sync successful — ${data.movieCount} movies are live; cleaned ${data.clearedLegacyKeys || 0} old cache keys. Edge caches refresh within 15 seconds.`);
+      announceMovieChange();
+      await fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
+    } catch (err) {
+      setSyncMessage(err.message || 'Database sync failed. The previous cache remains active.');
+      await loadCacheStatus();
+    } finally { setSyncBusy(false); }
+  }
 
   async function loadAdminMovies(authToken = token) {
     if (!authToken.trim()) return;
@@ -680,6 +750,7 @@ function AdminPanel() {
         setToken(saved);
         setAuthorized(true);
         loadAdminMovies(saved);
+        loadCacheStatus(saved);
       })
       .catch(() => window.sessionStorage.removeItem('archive-admin-token'));
   }, []);
@@ -695,6 +766,7 @@ function AdminPanel() {
       window.sessionStorage.setItem('archive-admin-token', authToken);
       setAuthorized(true);
       await loadAdminMovies(authToken);
+      await loadCacheStatus(authToken);
     } catch (err) { setError(err.message || 'Could not verify password.'); }
     finally { setAuthBusy(false); }
   }
@@ -705,10 +777,9 @@ function AdminPanel() {
       const response = await fetch('/api/movies', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.trim() }, body: JSON.stringify({ id }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed.');
-      announceMovieChange();
       setAdminMovies(rows => rows.filter(movie => String(movie.id) !== String(id)));
-      setManualMessage('Movie deleted from the catalogue.');
-      fetchCategoryOptions().then(setAvailableCategories).catch(() => {});
+      setManualMessage('Movie deleted from Neon. The public catalogue stays on the previous cache until you run syncDB.');
+      await loadCacheStatus();
     } catch (err) { setError(err.message || 'Delete failed.'); }
   }
 
@@ -736,8 +807,10 @@ function AdminPanel() {
         setEditingId(null);
         return;
       }
-      announceMovieChange();
-      setManualMessage(editingId ? 'Movie updated successfully.' : 'Movie published to the public catalogue.');
+      setManualMessage(editingId
+        ? 'Movie updated in Neon. The public catalogue stays unchanged until you run syncDB.'
+        : 'Movie saved in Neon. It will appear publicly after you run syncDB.');
+      await loadCacheStatus();
       setManualMovie({ movie_name: '', category: '', poster: '', movie_link: '' });
       setEditingId(null);
       await Promise.all([
@@ -761,8 +834,8 @@ function AdminPanel() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Import request failed.');
-      if (data.importedCount > 0) announceMovieChange();
       setResult(data);
+      await loadCacheStatus();
       await Promise.all([
         loadAdminMovies(),
         fetchCategoryOptions().then(setAvailableCategories),
@@ -804,6 +877,18 @@ function AdminPanel() {
         <p className="eyebrow">COLLECTION MANAGEMENT</p>
         <h1>Bring films<br/><em>into the archive.</em></h1>
         <p className="admin-copy">Search Internet Archive movie records and import playable files into your Neon catalog. Duplicate links and items without supported video files are skipped.</p>
+        <section className="dashboard-section" id="catalogue-cache">
+          <div className="dashboard-section-heading"><p className="eyebrow">PUBLIC CATALOGUE CACHE</p><h2>Database snapshot</h2><p>Movie edits and imports stay private to Neon until you run syncDB. Visitors continue seeing the last successful snapshot.</p></div>
+          <div className="admin-stats">
+            <div><strong>{cacheStatus?.active ? cacheStatus.movieCount : '—'}</strong><span>CACHED MOVIES</span></div>
+            <div><strong>{cacheStatus?.active ? 'ACTIVE' : cacheStatus?.snapshotMissing ? 'MISSING' : 'NOT SYNCED'}</strong><span>SNAPSHOT</span></div>
+            <div><strong>{cacheStatus ? (cacheStatus.pendingChanges ? 'YES' : 'NO') : '—'}</strong><span>PENDING CHANGES</span></div>
+          </div>
+          <p className="admin-security">{cacheStatus?.snapshotMissing ? 'The last snapshot is missing from Redis. Run syncDB to rebuild it; public requests are protected from showing unsynced Neon changes.' : cacheStatus?.syncedAt ? 'Last successful sync: ' + new Date(cacheStatus.syncedAt).toLocaleString() : 'No manual snapshot has been created yet. Run the first sync to publish the current Neon catalogue.'}</p>
+          {cacheStatus?.bytes ? <p className="admin-security">Snapshot size: {(cacheStatus.bytes / 1024).toFixed(1)} KB · Version {cacheStatus.version}</p> : null}
+          <button className="admin-submit" type="button" onClick={syncDatabase} disabled={syncBusy}>{syncBusy ? 'SYNCING DATABASE…' : '↻ syncDB'}</button>
+          {syncMessage && <div className="admin-message" role="status">{syncMessage}</div>}
+        </section>
         <section className="dashboard-section" id="movie-editor">
           <div className="dashboard-section-heading"><p className="eyebrow">YOUR MOVIE LIBRARY</p><h2>{editingId ? 'Edit movie' : 'Add your own movie'}</h2><p>Paste an Internet Archive video URL. We verify the item and playable video file before publishing it to the public catalog.</p></div>
           <form className="admin-form" onSubmit={publishMovie}>
