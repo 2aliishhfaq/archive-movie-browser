@@ -203,3 +203,34 @@ test('keeps multi-range requests on transparent upstream passthrough', async () 
     assert.equal(env.upstreamCalls[0].range, 'bytes=0-10,20-30');
   } finally { env.restore(); }
 });
+
+
+test('answers the Cloudflare root health probe with 200 instead of a missing-stream 400', async () => {
+  const response = await worker.fetch(new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/'), {}, {});
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.service, 'archive-movie-proxy');
+  assert.equal(body.rangeChunkBytes, CHUNK);
+});
+
+test('supports HEAD health probes without a response body', async () => {
+  const response = await worker.fetch(new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/', { method: 'HEAD' }), {}, {});
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.equal(await response.text(), '');
+});
+
+test('keeps the legacy root stream route when an Archive URL is supplied', async () => {
+  const env = setup();
+  try {
+    const url = 'https://archive-movie-proxy.2aliishhfaq.workers.dev/?url=' + encodeURIComponent(ARCHIVE_URL);
+    const response = await worker.fetch(new Request(url, { headers: { Range: 'bytes=0-9' } }), {}, {
+      exports: { Fmp4RangeCache: { fetch: async request => {
+        const fresh = await createFmp4CacheBlock(request);
+        return fresh;
+      } } }
+    });
+    assert.equal(response.status, 206);
+  } finally { env.restore(); }
+});
