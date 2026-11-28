@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogCacheKeys, catalogFallbackCacheKey, catalogVersionCacheKeys, readCatalogCacheVersion, resolveCachedCatalogVersion } from './archive-movie-proxy.js';
 
-test('catalogue cache keys are versioned so mutations cannot reuse previous catalogue entries', () => {
+test('catalogue cache keys are versioned so a manual sync cannot reuse previous catalogue entries', () => {
   const [oldFresh, oldStale] = catalogCacheKeys('https://worker.test/catalog?limit=24&offset=0', '12');
   const [newFresh, newStale] = catalogCacheKeys('https://worker.test/catalog?limit=24&offset=0', '13');
   assert.notEqual(oldFresh.url, newFresh.url);
