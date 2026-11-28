@@ -7,8 +7,10 @@ const cors = {
 const allowed = host => host === "archive.org" || host.endsWith(".archive.org");
 const jsonHeaders = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 const CATALOG_ORIGIN = "https://reelboxe.vercel.app/api/movies";
-// Catalogue cache keys include the Redis mutation version. Keep each immutable version warm
-// for one year; a movie write advances the version and makes the previous namespace unreachable.
+// A manual sync advances the catalogue version. Cache the tiny version pointer at the edge
+// for 15 seconds so routine catalogue requests do not hit Redis on every page view.
+const CATALOG_VERSION_TTL = 15;
+const CATALOG_VERSION_STALE_TTL = 31_536_000;
 const CATALOG_TTL = 31_536_000;
 const SEARCH_CATALOG_TTL = 86_400;
 const FALLBACK_TTL = 300;
@@ -27,6 +29,15 @@ export function catalogCacheKeys(requestUrl, version) {
   const stale = new URL(request.origin);
   stale.pathname = "/__edge_cache/v4/catalog/" + encodeURIComponent(version) + "/stale";
   stale.search = request.search;
+  return [new Request(fresh.toString()), new Request(stale.toString())];
+}
+
+export function catalogVersionCacheKeys(requestUrl) {
+  const request = new URL(requestUrl);
+  const fresh = new URL(request.origin);
+  fresh.pathname = "/__edge_cache/v5/catalog-version/fresh";
+  const stale = new URL(request.origin);
+  stale.pathname = "/__edge_cache/v5/catalog-version/stale";
   return [new Request(fresh.toString()), new Request(stale.toString())];
 }
 
@@ -169,17 +180,50 @@ export async function readCatalogCacheVersion() {
   }
 }
 
+export async function resolveCachedCatalogVersion(requestUrl, cache, ctx) {
+  const [freshKey, staleKey] = catalogVersionCacheKeys(requestUrl);
+  try {
+    const cached = await cache.match(freshKey);
+    if (cached) {
+      const version = (await cached.text()).trim();
+      if (/^[0-9]{1,24}$/.test(version)) return version;
+    }
+  } catch { /* Try the origin pointer and then the long-lived stale pointer. */ }
+
+  const version = await readCatalogCacheVersion();
+  if (version) {
+    const fresh = new Response(version, { headers: { "Cache-Control": "public, max-age=" + CATALOG_VERSION_TTL } });
+    const stale = new Response(version, { headers: { "Cache-Control": "public, max-age=" + CATALOG_VERSION_STALE_TTL } });
+    const writes = Promise.all([
+      cache.put(freshKey, fresh),
+      cache.put(staleKey, stale)
+    ]).catch(() => {});
+    if (ctx?.waitUntil) ctx.waitUntil(writes);
+    else await writes;
+    return version;
+  }
+
+  try {
+    const stale = await cache.match(staleKey);
+    if (stale) {
+      const staleVersion = (await stale.text()).trim();
+      if (/^[0-9]{1,24}$/.test(staleVersion)) return staleVersion;
+    }
+  } catch { /* Without a known version, the live Archive.org fallback remains available. */ }
+  return null;
+}
+
 async function handleCatalog(request, ctx) {
   if (request.method !== "GET") {
     return Response.json({ error: "Method not allowed" }, { status: 405, headers: { ...jsonHeaders, Allow: "GET, OPTIONS" } });
   }
   const url = new URL(request.url);
-  const version = await readCatalogCacheVersion();
+  const cache = caches.default;
+  const version = await resolveCachedCatalogVersion(url, cache, ctx);
   const cacheEnabled = Boolean(version);
   const [freshKey, staleKey] = cacheEnabled ? catalogCacheKeys(url, version) : [null, null];
   const fallbackKey = cacheEnabled ? catalogFallbackCacheKey(url, version) : null;
   const cacheTtl = url.searchParams.get("q")?.trim() ? SEARCH_CATALOG_TTL : CATALOG_TTL;
-  const cache = caches.default;
 
   if (cacheEnabled) {
     try {
