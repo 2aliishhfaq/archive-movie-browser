@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { createFmp4CacheBlock } from './archive-movie-proxy.js';
 
-const CHUNK = 2 * 1024 * 1024;
-const TOTAL = CHUNK * 2 + 100;
+const FIRST_CHUNK = 1 * 1024 * 1024;
+const CHUNK = 8 * 1024 * 1024;
+const TOTAL = FIRST_CHUNK + CHUNK * 2 + 100;
 const ARCHIVE_URL = 'https://archive.org/download/test-film/film.ia.mp4';
 const PROXY_URL = 'https://archive-movie-proxy.2aliishhfaq.workers.dev/stream?url=' + encodeURIComponent(ARCHIVE_URL);
 
@@ -85,7 +86,7 @@ function setup({ ignoreRange = false } = {}) {
   return { request, upstreamCalls, entries, flushCache, restore };
 }
 
-test('returns exact 206 bytes while caching the aligned first 2 MiB MP4 block', async () => {
+test('returns exact 206 bytes while caching the 1 MiB startup MP4 block', async () => {
   const env = setup();
   try {
     const response = await env.request('bytes=12-31');
@@ -95,16 +96,17 @@ test('returns exact 206 bytes while caching the aligned first 2 MiB MP4 block', 
     assert.equal(response.headers.get('Content-Type'), 'video/mp4');
     assert.equal(response.headers.get('Accept-Ranges'), 'bytes');
     assert.equal(response.headers.get('X-Range-Chunk-Bytes'), String(CHUNK));
+    assert.equal(response.headers.get('X-Range-First-Chunk-Bytes'), String(FIRST_CHUNK));
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), makeBytes(12, 20));
     await env.flushCache();
     assert.equal(env.upstreamCalls.length, 1);
-    assert.equal(env.upstreamCalls[0].range, 'bytes=0-' + (CHUNK - 1));
+    assert.equal(env.upstreamCalls[0].range, 'bytes=0-' + (FIRST_CHUNK - 1));
     assert.equal(env.entries.size, 1);
-    assert.match([...env.entries.keys()][0], /__fmp4_cache_block_v2/);
+    assert.match([...env.entries.keys()][0], /__fmp4_cache_block_v3/);
   } finally { env.restore(); }
 });
 
-test('serves a second seek inside the same 2 MiB block from edge cache', async () => {
+test('serves a second seek inside the same 1 MiB startup block from edge cache', async () => {
   const env = setup();
   try {
     const first = await env.request('bytes=100-119');
@@ -118,11 +120,11 @@ test('serves a second seek inside the same 2 MiB block from edge cache', async (
   } finally { env.restore(); }
 });
 
-test('streams a range spanning two aligned chunks without changing the requested range', async () => {
+test('streams across the 1 MiB startup block into the following 8 MiB block without changing the requested range', async () => {
   const env = setup();
   try {
-    const start = CHUNK - 4;
-    const end = CHUNK + 5;
+    const start = FIRST_CHUNK - 4;
+    const end = FIRST_CHUNK + 5;
     const response = await env.request('bytes=' + start + '-' + end);
     assert.equal(response.status, 206);
     assert.equal(response.headers.get('Content-Range'), 'bytes ' + start + '-' + end + '/' + TOTAL);
@@ -130,8 +132,8 @@ test('streams a range spanning two aligned chunks without changing the requested
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), makeBytes(start, 10));
     await env.flushCache();
     assert.deepEqual(env.upstreamCalls.map(call => call.range), [
-      'bytes=0-' + (CHUNK - 1),
-      'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1)
+      'bytes=0-' + (FIRST_CHUNK - 1),
+      'bytes=' + FIRST_CHUNK + '-' + (FIRST_CHUNK + CHUNK - 1)
     ]);
     const cachedRepeat = await env.request('bytes=' + start + '-' + end);
     assert.equal(cachedRepeat.status, 206);
@@ -141,7 +143,7 @@ test('streams a range spanning two aligned chunks without changing the requested
   } finally { env.restore(); }
 });
 
-test('streams an open-ended browser range as a truthful full 206 while fetching only aligned 2 MiB blocks', async () => {
+test('streams an open-ended browser range as a truthful full 206 using a 1 MiB first block and on-demand 8 MiB blocks', async () => {
   const originalFixedLengthStream = globalThis.FixedLengthStream;
   globalThis.FixedLengthStream = class extends TransformStream {
     constructor(expectedBytes) {
@@ -167,13 +169,14 @@ test('streams an open-ended browser range as a truthful full 206 while fetching 
     const body = new Uint8Array(await response.arrayBuffer());
     assert.equal(body.byteLength, TOTAL);
     assert.deepEqual(body.slice(0, 32), makeBytes(0, 32));
-    assert.deepEqual(body.slice(CHUNK - 16, CHUNK + 16), makeBytes(CHUNK - 16, 32));
+    assert.deepEqual(body.slice(FIRST_CHUNK - 16, FIRST_CHUNK + 16), makeBytes(FIRST_CHUNK - 16, 32));
     assert.deepEqual(body.slice(-32), makeBytes(TOTAL - 32, 32));
     await env.flushCache();
     assert.deepEqual(env.upstreamCalls.map(call => call.range), [
-      'bytes=0-' + (CHUNK - 1),
-      'bytes=' + CHUNK + '-' + (CHUNK * 2 - 1),
-      'bytes=' + (CHUNK * 2) + '-' + (CHUNK * 3 - 1)
+      'bytes=0-' + (FIRST_CHUNK - 1),
+      'bytes=' + FIRST_CHUNK + '-' + (FIRST_CHUNK + CHUNK - 1),
+      'bytes=' + (FIRST_CHUNK + CHUNK) + '-' + (FIRST_CHUNK + CHUNK * 2 - 1),
+      'bytes=' + (FIRST_CHUNK + CHUNK * 2) + '-' + (FIRST_CHUNK + CHUNK * 3 - 1)
     ]);
   } finally {
     env.restore();
@@ -212,6 +215,7 @@ test('answers the Cloudflare root health probe with 200 instead of a missing-str
   assert.equal(body.ok, true);
   assert.equal(body.service, 'archive-movie-proxy');
   assert.equal(body.rangeChunkBytes, CHUNK);
+  assert.equal(body.firstRangeChunkBytes, FIRST_CHUNK);
 });
 
 test('supports HEAD health probes without a response body', async () => {
@@ -239,7 +243,7 @@ test('keeps the legacy root stream route when an Archive URL is supplied', async
 test('treats an Archive range-cache miss as a non-fatal bypass, not an internal HTTP 502', async () => {
   const env = setup({ ignoreRange: true });
   try {
-    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v2?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
+    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v3?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
     const response = await createFmp4CacheBlock(request);
     assert.equal(response.status, 204);
     assert.equal(response.headers.get('X-Range-Cache-Bypass'), 'upstream-range-unavailable');
@@ -250,7 +254,7 @@ test('treats an Archive upstream network failure as a non-fatal range-cache bypa
   const env = setup();
   try {
     globalThis.fetch = async () => { throw new Error('simulated Archive upstream outage'); };
-    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v2?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
+    const request = new Request('https://archive-movie-proxy.2aliishhfaq.workers.dev/__fmp4_cache_block_v3?url=' + encodeURIComponent(ARCHIVE_URL) + '&start=0');
     const response = await createFmp4CacheBlock(request);
     assert.equal(response.status, 204);
     assert.equal(response.headers.get('X-Range-Cache-Bypass'), 'upstream-unavailable');
